@@ -29,3 +29,7 @@ agent/target/
 *.log
 /temp/
 *.pdb
+node_modules
+server/web/node_modules
+server/web/dist
+server/cmd/web
