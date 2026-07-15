@@ -229,6 +229,17 @@ func main() {
 		mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 		})
+		// 手动验证指令下发
+		mux.HandleFunc("GET /api/cmd/isolate", func(w http.ResponseWriter, r *http.Request) {
+			agentID := r.URL.Query().Get("agent_id")
+			if agentID == "" {
+				http.Error(w, "missing agent_id", 400)
+				return
+			}
+			cmdBus.IsolateAgent(agentID)
+			log.Printf("[API] 手动隔离: %s", agentID)
+			json.NewEncoder(w).Encode(map[string]string{"status": "sent", "agent": agentID})
+		})
 		// 内嵌 Dashboard 静态文件
 		webSub, _ := fs.Sub(webFS, "web")
 		fileSrv := http.FileServer(http.FS(webSub))
