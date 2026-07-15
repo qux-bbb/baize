@@ -1,77 +1,58 @@
 import { useState, useEffect, useCallback } from 'react'
 
-// ── Types ──────────────────────────────────────────────
-
 interface Host {
-  agent_id: string
-  hostname: string
-  os_type: string
-  os_version: string
-  event_count: number
-  last_seen: string
-  ips?: string[]
+  agent_id: string; hostname: string; os_type: string; os_version: string
+  event_count: number; last_seen: string; ips?: string[]
 }
 
 interface Alert {
-  alert_id: string
-  rule_name: string
-  severity: string
-  hostname: string
-  description: string
-  event_type: string
-  '@timestamp': string
-  tags?: string[]
+  alert_id: string; rule_name: string; severity: string; hostname: string
+  description: string; event_type: string; '@timestamp': string; tags?: string[]
 }
 
-interface Event {
-  '@timestamp': string
-  event_type: string
-  event_action?: string
-  summary: string
-  pid?: number
-  hostname: string
+interface AlertDetail {
+  alert_id: string; rule_name: string; rule_id: string; severity: string
+  hostname: string; description: string; '@timestamp': string; tags?: string[]
+  event_type: string; source_event?: Record<string, string>
 }
 
-// ── API 工具 ──────────────────────────────────────────────
+interface EventItem {
+  '@timestamp': string; event_type: string; event_action?: string
+  summary: string; pid?: number; hostname: string
+}
 
 const API = '/api'
 
 async function fetchJSON<T>(url: string): Promise<T> {
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res.json()
+  const r = await fetch(url)
+  if (!r.ok) throw new Error(`HTTP ${r.status}`)
+  return r.json()
 }
 
 function timeAgo(ts: string): string {
-  const sec = Math.floor((Date.now() - new Date(ts).getTime()) / 1000)
-  if (sec < 60) return '刚刚'
-  if (sec < 3600) return `${Math.floor(sec / 60)}分钟前`
-  if (sec < 86400) return `${Math.floor(sec / 3600)}小时前`
-  return `${Math.floor(sec / 86400)}天前`
+  const s = Math.floor((Date.now() - new Date(ts).getTime()) / 1000)
+  if (s < 60) return '刚刚'
+  if (s < 3600) return `${Math.floor(s / 60)}分钟前`
+  if (s < 86400) return `${Math.floor(s / 3600)}小时前`
+  return `${Math.floor(s / 86400)}天前`
 }
 
-const SEV_COLORS: Record<string, string> = {
-  critical: '#fb7185',
-  high: '#fbbf24',
-  medium: '#fb923c',
-  low: '#22d3ee',
-  info: '#94a3b8',
+const SEV: Record<string, string> = {
+  critical: '#fb7185', high: '#fbbf24', medium: '#fb923c', low: '#22d3ee', info: '#94a3b8',
 }
-
-// ── 单页 App ──────────────────────────────────────────────
 
 export default function App() {
   const [tab, setTab] = useState<'hosts' | 'alerts' | 'events'>('hosts')
   const [hosts, setHosts] = useState<Host[]>([])
   const [alerts, setAlerts] = useState<Alert[]>([])
-  const [events, setEvents] = useState<Event[]>([])
+  const [events, setEvents] = useState<EventItem[]>([])
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
   const [hostFilter, setHostFilter] = useState('')
+  const [detail, setDetail] = useState<AlertDetail | null>(null)
 
   const load = useCallback(async () => {
-    setLoading(true)
-    setErr('')
+    setLoading(true); setErr(''); setDetail(null)
     try {
       if (tab === 'hosts') {
         const d = await fetchJSON<{ hosts: Host[] }>(`${API}/hosts`)
@@ -81,16 +62,21 @@ export default function App() {
         setAlerts(d.alerts)
       } else {
         const q = hostFilter ? `?hostname=${hostFilter}` : ''
-        const d = await fetchJSON<{ events: Event[] }>(`${API}/events${q}`)
+        const d = await fetchJSON<{ events: EventItem[] }>(`${API}/events${q}`)
         setEvents(d.events)
       }
-    } catch (e: any) {
-      setErr(e.message)
-    }
+    } catch (e: any) { setErr(e.message) }
     setLoading(false)
   }, [tab, hostFilter])
 
   useEffect(() => { load() }, [load])
+
+  async function showDetail(alertID: string) {
+    try {
+      const d = await fetchJSON<AlertDetail>(`${API}/alert?alert_id=${alertID}`)
+      setDetail(d)
+    } catch { setErr('加载告警详情失败') }
+  }
 
   return (
     <div className="app">
@@ -106,17 +92,14 @@ export default function App() {
       </header>
 
       <main className="main">
-        {err && <div className="error">连接失败: {err}</div>}
+        {err && <div className="error">{err}</div>}
         {loading && <div className="loading">加载中...</div>}
 
         {!loading && tab === 'hosts' && (
           <div className="grid">
             {hosts.map(h => (
-              <div key={h.agent_id} className="card host-card" onClick={() => { setHostFilter(h.hostname); setTab('events') }}>
-                <div className="card-header">
-                  <span className="dot green" />
-                  <strong>{h.hostname}</strong>
-                </div>
+              <div key={h.agent_id} className="card" onClick={() => { setHostFilter(h.hostname); setTab('events') }}>
+                <div className="card-header"><span className="dot green" /><strong>{h.hostname}</strong></div>
                 <div className="card-body">
                   <div>OS: {h.os_type} {h.os_version}</div>
                   <div>事件: {h.event_count.toLocaleString()}</div>
@@ -135,8 +118,8 @@ export default function App() {
             </thead>
             <tbody>
               {alerts.map(a => (
-                <tr key={a.alert_id}>
-                  <td><span className="sev" style={{ color: SEV_COLORS[a.severity] || '#94a3b8' }}>●</span> {a.severity}</td>
+                <tr key={a.alert_id} onClick={() => showDetail(a.alert_id)} className="clickable">
+                  <td><span className="sev" style={{ color: SEV[a.severity] || '#94a3b8' }}>●</span> {a.severity}</td>
                   <td>{a.rule_name}</td>
                   <td>{a.hostname}</td>
                   <td className="mono">{a.event_type}</td>
@@ -155,9 +138,7 @@ export default function App() {
               <button onClick={load} className="btn">查询</button>
             </div>
             <table className="table">
-              <thead>
-                <tr><th>时间</th><th>主机</th><th>类型</th><th>摘要</th></tr>
-              </thead>
+              <thead><tr><th>时间</th><th>主机</th><th>类型</th><th>摘要</th></tr></thead>
               <tbody>
                 {events.map((e, i) => (
                   <tr key={i}>
@@ -173,6 +154,45 @@ export default function App() {
           </>
         )}
       </main>
+
+      {/* 告警详情弹窗 */}
+      {detail && (
+        <div className="overlay" onClick={() => setDetail(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <span className="sev" style={{ color: SEV[detail.severity] }}>●</span>
+              <strong>{detail.rule_name}</strong>
+              <button className="close" onClick={() => setDetail(null)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="field"><label>告警 ID</label><span className="mono">{detail.alert_id}</span></div>
+              <div className="field"><label>规则 ID</label><span className="mono">{detail.rule_id}</span></div>
+              <div className="field"><label>严重度</label><span>{detail.severity}</span></div>
+              <div className="field"><label>主机</label><span>{detail.hostname}</span></div>
+              <div className="field"><label>描述</label><span>{detail.description || '-'}</span></div>
+              <div className="field"><label>事件类型</label><span className="mono">{detail.event_type}</span></div>
+              <div className="field"><label>时间</label><span>{detail['@timestamp']}</span></div>
+              {detail.tags && <div className="field"><label>标签</label><span>{detail.tags.join(', ')}</span></div>}
+
+              {detail.source_event && (
+                <div className="source-section">
+                  <div className="section-title">触发事件的字段</div>
+                  <table className="kv-table">
+                    <tbody>
+                      {Object.entries(detail.source_event).map(([k, v]) => (
+                        <tr key={k}>
+                          <td className="mono">{k}</td>
+                          <td className="mono">{String(v)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

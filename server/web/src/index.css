@@ -64,6 +64,41 @@ h1 { font-family: var(--font); font-size: 1.25rem; font-weight: 700; }
   padding: 0.4rem 1rem; border-radius: 6px; cursor: pointer; font-family: var(--font); font-size: 0.8rem;
 }
 .btn:hover { background: rgba(34, 211, 238, 0.2); }
+.clickable { cursor: pointer; }
+
+/* Modal */
+.overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+}
+.modal {
+  background: #131c31; border: 1px solid #1e293b; border-radius: 12px;
+  width: 640px; max-height: 80vh; overflow-y: auto; padding: 1.5rem;
+}
+.modal-header {
+  display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1.2rem; font-size: 1rem;
+}
+.modal-header .close {
+  margin-left: auto; background: none; border: none; color: #64748b;
+  font-size: 1.4rem; cursor: pointer; line-height: 1;
+}
+.modal-header .close:hover { color: white; }
+.modal-body .field {
+  display: flex; gap: 0.8rem; padding: 0.35rem 0; border-bottom: 1px solid rgba(30,41,59,0.4);
+  font-size: 0.8rem;
+}
+.modal-body .field label { color: #64748b; min-width: 80px; flex-shrink: 0; }
+.source-section { margin-top: 1rem; }
+.section-title {
+  font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--accent); margin-bottom: 0.5rem;
+}
+.kv-table { width: 100%; font-size: 0.75rem; border-collapse: collapse; }
+.kv-table td {
+  padding: 0.3rem 0.5rem; border-bottom: 1px solid rgba(30,41,59,0.3);
+  word-break: break-all;
+}
+.kv-table td:first-child { color: var(--muted); width: 140px; }
 
 /* States */
 .loading, .empty, .error { padding: 2rem; text-align: center; color: var(--muted); font-size: 0.9rem; }

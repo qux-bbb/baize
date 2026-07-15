@@ -232,6 +232,83 @@ func (h *Handler) Events(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"events": events, "total": len(events)})
 }
 
+// ── 告警详情（含原始事件）────────────────────────────────
+
+type AlertDetail struct {
+	AlertID     string                 `json:"alert_id"`
+	RuleName    string                 `json:"rule_name"`
+	RuleID      string                 `json:"rule_id"`
+	Severity    string                 `json:"severity"`
+	Hostname    string                 `json:"hostname"`
+	Description string                 `json:"description"`
+	Timestamp   string                 `json:"@timestamp"`
+	Tags        []string               `json:"tags,omitempty"`
+	SourceEvent map[string]interface{} `json:"source_event,omitempty"`
+	EventType   string                 `json:"event_type"`
+}
+
+func (h *Handler) AlertDetail(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	alertID := r.URL.Query().Get("alert_id")
+	if alertID == "" {
+		http.Error(w, "missing alert_id", 400)
+		return
+	}
+
+	query := fmt.Sprintf(`{
+		"size": 1,
+		"query": {"term": {"alert_id": "%s"}}
+	}`, alertID)
+
+	req := esapi.SearchRequest{
+		Index: []string{alertsIndex},
+		Body:  strings.NewReader(query),
+	}
+	res, err := req.Do(ctx, h.es)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	defer res.Body.Close()
+
+	var raw map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&raw); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+
+	hits, _ := raw["hits"].(map[string]any)["hits"].([]any)
+	if len(hits) == 0 {
+		http.Error(w, "not found", 404)
+		return
+	}
+
+	src := hits[0].(map[string]any)["_source"].(map[string]any)
+	detail := AlertDetail{
+		AlertID:     getStr(src, "alert_id"),
+		RuleName:    getStr(src, "rule_name"),
+		RuleID:      getStr(src, "rule_id"),
+		Severity:    getStr(src, "severity"),
+		Hostname:    getStr(src, "hostname"),
+		Description: getStr(src, "description"),
+		Timestamp:   getStr(src, "@timestamp"),
+		Tags:        getStrs(src, "tags"),
+		EventType:   getStr(src, "event_type"),
+	}
+
+	// 解析 source_event 字符串为 JSON 对象
+	if seStr := getStr(src, "source_event"); seStr != "" {
+		var se map[string]interface{}
+		if err := json.Unmarshal([]byte(seStr), &se); err == nil {
+			detail.SourceEvent = se
+		}
+	}
+
+	json.NewEncoder(w).Encode(detail)
+}
+
 // ── 辅助 ──────────────────────────────────────────────────
 
 func getStr(m map[string]any, key string) string {

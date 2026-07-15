@@ -224,6 +224,7 @@ func main() {
 			apiHandler := api.New(esStore.ESClient())
 			mux.HandleFunc("GET /api/hosts", apiHandler.Hosts)
 			mux.HandleFunc("GET /api/alerts", apiHandler.Alerts)
+		mux.HandleFunc("GET /api/alert", apiHandler.AlertDetail)
 			mux.HandleFunc("GET /api/events", apiHandler.Events)
 		}
 		mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
