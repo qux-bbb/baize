@@ -27,8 +27,12 @@ struct Cli {
     server: String,
     #[arg(long)]
     agent_id: Option<String>,
+    /// 进程采集间隔（秒）
     #[arg(long, default_value = "3")]
     interval: u64,
+    /// 文件监控目录（逗号分隔）
+    #[arg(long, default_value = "")]
+    watch: String,
     #[arg(long)]
     hostname: Option<String>,
 }
@@ -67,7 +71,7 @@ async fn main() -> Result<()> {
 
     // 断线重连循环
     loop {
-        match run(&cli.server, agent_info.clone(), &sys, cli.interval).await {
+        match run(&cli.server, agent_info.clone(), &sys, cli.interval, &cli.watch).await {
             Ok(()) => {
                 info!("连接正常结束，5 秒后重连...");
                 time::sleep(Duration::from_secs(5)).await;
@@ -85,6 +89,7 @@ async fn run(
     agent_info: AgentInfo,
     system: &Arc<tokio::sync::Mutex<System>>,
     interval_secs: u64,
+    watch: &str,
 ) -> Result<()> {
     let endpoint = Endpoint::from_shared(server.to_string())
         .context("无效的 Server 地址")?;
@@ -108,6 +113,18 @@ async fn run(
             error!("进程采集器错误: {:?}", e);
         }
     });
+
+    // 启动文件监控
+    if !watch.is_empty() {
+        let file_tx = tx.clone();
+        let paths: Vec<String> = watch.split(',').map(|s| s.trim().to_string()).collect();
+        info!("[FileMon] 启动文件监控: {:?}", paths);
+        tokio::spawn(async move {
+            if let Err(e) = collector::file::start(paths, file_tx).await {
+                error!("文件监控错误: {:?}", e);
+            }
+        });
+    }
 
     // 转发线程：rx → AgentInfo + seq → gRPC 流
     let (request_tx, request_rx) = mpsc::channel::<Event>(1024);
