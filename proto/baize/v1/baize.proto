@@ -240,10 +240,7 @@ service BaizeService {
   // 双向流: Agent 维持长连接
   //   → Agent 上传 Event 流 (实时遥测)
   //   ← Server 下发 Command 流 (检测命中/手动响应)
-  //
-  // 生命周期: Agent 启动 → OpenStream → 持续收发 → Agent 停止 → Close
-  // 断线重连由 Agent 负责 (指数退避)
-  rpc Connect(stream Event) returns (stream Command);
+  rpc AgentStream(stream Event) returns (stream Command);
 
   // 单向: Agent 上报指令执行结果
   rpc ReportCommandResult(CommandResult) returns (Empty);

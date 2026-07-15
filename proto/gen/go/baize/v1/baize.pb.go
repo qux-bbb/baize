@@ -1951,9 +1951,9 @@ const file_baize_v1_baize_proto_rawDesc = "" +
 	"\rerror_message\x18\x03 \x01(\tR\ferrorMessage\x12\x16\n" +
 	"\x06output\x18\x04 \x01(\tR\x06output\x12&\n" +
 	"\x0fcompleted_at_ns\x18\x05 \x01(\x04R\rcompletedAtNs\"\a\n" +
-	"\x05Empty2\xb5\x01\n" +
-	"\fBaizeService\x121\n" +
-	"\aConnect\x12\x0f.baize.v1.Event\x1a\x11.baize.v1.Command(\x010\x01\x12?\n" +
+	"\x05Empty2\xb9\x01\n" +
+	"\fBaizeService\x125\n" +
+	"\vAgentStream\x12\x0f.baize.v1.Event\x1a\x11.baize.v1.Command(\x010\x01\x12?\n" +
 	"\x13ReportCommandResult\x12\x17.baize.v1.CommandResult\x1a\x0f.baize.v1.Empty\x121\n" +
 	"\tHeartbeat\x12\x13.baize.v1.AgentInfo\x1a\x0f.baize.v1.EmptyB8Z6github.com/qux-bbb/baize/proto/gen/go/baize/v1;baizev1b\x06proto3"
 
@@ -2007,10 +2007,10 @@ var file_baize_v1_baize_proto_depIdxs = []int32{
 	13, // 12: baize.v1.Command.kill_process:type_name -> baize.v1.KillProcessCommand
 	14, // 13: baize.v1.Command.delete_file:type_name -> baize.v1.DeleteFileCommand
 	15, // 14: baize.v1.Command.execute_script:type_name -> baize.v1.ExecuteScriptCommand
-	10, // 15: baize.v1.BaizeService.Connect:input_type -> baize.v1.Event
+	10, // 15: baize.v1.BaizeService.AgentStream:input_type -> baize.v1.Event
 	17, // 16: baize.v1.BaizeService.ReportCommandResult:input_type -> baize.v1.CommandResult
 	0,  // 17: baize.v1.BaizeService.Heartbeat:input_type -> baize.v1.AgentInfo
-	16, // 18: baize.v1.BaizeService.Connect:output_type -> baize.v1.Command
+	16, // 18: baize.v1.BaizeService.AgentStream:output_type -> baize.v1.Command
 	18, // 19: baize.v1.BaizeService.ReportCommandResult:output_type -> baize.v1.Empty
 	18, // 20: baize.v1.BaizeService.Heartbeat:output_type -> baize.v1.Empty
 	18, // [18:21] is the sub-list for method output_type

@@ -25,7 +25,7 @@ type baizeServer struct {
 	engine *engine.Engine
 }
 
-func (s *baizeServer) Connect(stream pb.BaizeService_ConnectServer) error {
+func (s *baizeServer) AgentStream(stream pb.BaizeService_AgentStreamServer) error {
 	log.Println("[Connect] 新的 Agent 连接已建立")
 	eventCount := 0
 

@@ -19,7 +19,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	BaizeService_Connect_FullMethodName             = "/baize.v1.BaizeService/Connect"
+	BaizeService_AgentStream_FullMethodName         = "/baize.v1.BaizeService/AgentStream"
 	BaizeService_ReportCommandResult_FullMethodName = "/baize.v1.BaizeService/ReportCommandResult"
 	BaizeService_Heartbeat_FullMethodName           = "/baize.v1.BaizeService/Heartbeat"
 )
@@ -32,10 +32,7 @@ type BaizeServiceClient interface {
 	//
 	//	→ Agent 上传 Event 流 (实时遥测)
 	//	← Server 下发 Command 流 (检测命中/手动响应)
-	//
-	// 生命周期: Agent 启动 → OpenStream → 持续收发 → Agent 停止 → Close
-	// 断线重连由 Agent 负责 (指数退避)
-	Connect(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[Event, Command], error)
+	AgentStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[Event, Command], error)
 	// 单向: Agent 上报指令执行结果
 	ReportCommandResult(ctx context.Context, in *CommandResult, opts ...grpc.CallOption) (*Empty, error)
 	// 单向: Agent 上报运行状态/健康检查
@@ -50,9 +47,9 @@ func NewBaizeServiceClient(cc grpc.ClientConnInterface) BaizeServiceClient {
 	return &baizeServiceClient{cc}
 }
 
-func (c *baizeServiceClient) Connect(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[Event, Command], error) {
+func (c *baizeServiceClient) AgentStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[Event, Command], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &BaizeService_ServiceDesc.Streams[0], BaizeService_Connect_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &BaizeService_ServiceDesc.Streams[0], BaizeService_AgentStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +58,7 @@ func (c *baizeServiceClient) Connect(ctx context.Context, opts ...grpc.CallOptio
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type BaizeService_ConnectClient = grpc.BidiStreamingClient[Event, Command]
+type BaizeService_AgentStreamClient = grpc.BidiStreamingClient[Event, Command]
 
 func (c *baizeServiceClient) ReportCommandResult(ctx context.Context, in *CommandResult, opts ...grpc.CallOption) (*Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -91,10 +88,7 @@ type BaizeServiceServer interface {
 	//
 	//	→ Agent 上传 Event 流 (实时遥测)
 	//	← Server 下发 Command 流 (检测命中/手动响应)
-	//
-	// 生命周期: Agent 启动 → OpenStream → 持续收发 → Agent 停止 → Close
-	// 断线重连由 Agent 负责 (指数退避)
-	Connect(grpc.BidiStreamingServer[Event, Command]) error
+	AgentStream(grpc.BidiStreamingServer[Event, Command]) error
 	// 单向: Agent 上报指令执行结果
 	ReportCommandResult(context.Context, *CommandResult) (*Empty, error)
 	// 单向: Agent 上报运行状态/健康检查
@@ -109,8 +103,8 @@ type BaizeServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedBaizeServiceServer struct{}
 
-func (UnimplementedBaizeServiceServer) Connect(grpc.BidiStreamingServer[Event, Command]) error {
-	return status.Error(codes.Unimplemented, "method Connect not implemented")
+func (UnimplementedBaizeServiceServer) AgentStream(grpc.BidiStreamingServer[Event, Command]) error {
+	return status.Error(codes.Unimplemented, "method AgentStream not implemented")
 }
 func (UnimplementedBaizeServiceServer) ReportCommandResult(context.Context, *CommandResult) (*Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportCommandResult not implemented")
@@ -139,12 +133,12 @@ func RegisterBaizeServiceServer(s grpc.ServiceRegistrar, srv BaizeServiceServer)
 	s.RegisterService(&BaizeService_ServiceDesc, srv)
 }
 
-func _BaizeService_Connect_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(BaizeServiceServer).Connect(&grpc.GenericServerStream[Event, Command]{ServerStream: stream})
+func _BaizeService_AgentStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(BaizeServiceServer).AgentStream(&grpc.GenericServerStream[Event, Command]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type BaizeService_ConnectServer = grpc.BidiStreamingServer[Event, Command]
+type BaizeService_AgentStreamServer = grpc.BidiStreamingServer[Event, Command]
 
 func _BaizeService_ReportCommandResult_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CommandResult)
@@ -200,8 +194,8 @@ var BaizeService_ServiceDesc = grpc.ServiceDesc{
 	},
 	Streams: []grpc.StreamDesc{
 		{
-			StreamName:    "Connect",
-			Handler:       _BaizeService_Connect_Handler,
+			StreamName:    "AgentStream",
+			Handler:       _BaizeService_AgentStream_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},

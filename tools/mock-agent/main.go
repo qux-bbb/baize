@@ -36,7 +36,7 @@ func main() {
 	client := pb.NewBaizeServiceClient(conn)
 	ctx := context.Background()
 
-	stream, err := client.Connect(ctx)
+	stream, err := client.AgentStream(ctx)
 	if err != nil {
 		log.Fatalf("建立 Connect 流失败: %v", err)
 	}
