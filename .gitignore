@@ -28,3 +28,4 @@ agent/target/
 *-init.exe
 *.log
 /temp/
+*.pdb
