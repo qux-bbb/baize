@@ -33,3 +33,5 @@ node_modules
 server/web/node_modules
 server/web/dist
 server/cmd/web
+
+tmp.txt
