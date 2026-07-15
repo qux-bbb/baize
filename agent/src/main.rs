@@ -114,6 +114,17 @@ async fn run(
         }
     });
 
+    // Windows EventLog 实时采集（进程创建 + 网络连接）
+    #[cfg(target_os = "windows")]
+    {
+        let el_tx = tx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = collector::windows::start(el_tx).await {
+                error!("EventLog 采集器错误: {:?}", e);
+            }
+        });
+    }
+
     // 启动文件监控
     if !watch.is_empty() {
         let file_tx = tx.clone();
