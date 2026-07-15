@@ -28,7 +28,7 @@ struct Cli {
     #[arg(long)]
     agent_id: Option<String>,
     /// 进程采集间隔（秒）
-    #[arg(long, default_value = "3")]
+    #[arg(long, default_value = "30")]
     interval: u64,
     /// 文件监控目录（逗号分隔）
     #[arg(long, default_value = "")]
@@ -164,8 +164,129 @@ async fn run(
 
     while let Some(cmd) = incoming.message().await? {
         info!("收到指令: {:?}", cmd);
+
+        // 执行指令
+        if let Some(cmd_type) = &cmd.command_type {
+            use pb::command::CommandType;
+            let result = match cmd_type {
+                CommandType::Isolate(isolate_cmd) => {
+                    execute_isolate(isolate_cmd.isolate)
+                }
+                CommandType::KillProcess(kill_cmd) => {
+                    execute_kill_process(kill_cmd.pid)
+                }
+                CommandType::DeleteFile(del_cmd) => {
+                    execute_delete_file(&del_cmd.file_path, del_cmd.force)
+                }
+                CommandType::ExecuteScript(script_cmd) => {
+                    execute_script(&script_cmd.script_content, &script_cmd.interpreter)
+                }
+            };
+
+            let success = result.is_ok();
+            let error_msg = result.err().map(|e| e.to_string()).unwrap_or_default();
+            info!("指令 {} 执行结果: success={} error={}", cmd.command_id, success, error_msg);
+
+            // 上报执行结果
+            let result_msg = pb::CommandResult {
+                command_id: cmd.command_id.clone(),
+                success,
+                error_message: error_msg,
+                output: String::new(),
+                completed_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64,
+            };
+            let _ = client.report_command_result(result_msg).await;
+        }
     }
 
     info!("Server 流已关闭");
+    Ok(())
+}
+
+// ── 指令执行器 ──────────────────────────────────────────
+
+use std::process::Command as StdCommand;
+
+/// 隔离/解除隔离主机
+fn execute_isolate(isolate: bool) -> anyhow::Result<()> {
+    if cfg!(target_os = "windows") {
+        if isolate {
+            // 修改防火墙规则阻止所有出站连接
+            StdCommand::new("netsh")
+                .args(["advfirewall", "set", "allprofiles", "firewallpolicy", "blockinbound,blockoutbound"])
+                .output()?;
+            tracing::warn!("[响应] 主机已隔离（出站已阻断）");
+        } else {
+            StdCommand::new("netsh")
+                .args(["advfirewall", "set", "allprofiles", "firewallpolicy", "blockinbound,allowoutbound"])
+                .output()?;
+            tracing::warn!("[响应] 主机隔离已解除");
+        }
+    }
+    Ok(())
+}
+
+/// 杀进程
+fn execute_kill_process(pid: u64) -> anyhow::Result<()> {
+    if cfg!(target_os = "windows") {
+        StdCommand::new("taskkill")
+            .args(["/F", "/PID", &pid.to_string()])
+            .output()?;
+    } else {
+        StdCommand::new("kill")
+            .args(["-9", &pid.to_string()])
+            .output()?;
+    }
+    tracing::warn!("[响应] 已终止进程 PID={}", pid);
+    Ok(())
+}
+
+/// 删除文件
+fn execute_delete_file(path: &str, force: bool) -> anyhow::Result<()> {
+    if cfg!(target_os = "windows") {
+        let mut cmd = StdCommand::new("del");
+        if force { cmd.arg("/F"); }
+        cmd.arg("/Q").arg(path).output()?;
+    } else {
+        let mut cmd = StdCommand::new("rm");
+        if force { cmd.arg("-f"); }
+        cmd.arg(path).output()?;
+    }
+    tracing::warn!("[响应] 已删除: {}", path);
+    Ok(())
+}
+
+/// 远程执行脚本
+fn execute_script(content: &str, interpreter: &str) -> anyhow::Result<()> {
+    let mut cmd = match interpreter {
+        "powershell" => {
+            let mut c = StdCommand::new("powershell");
+            c.args(["-NoProfile", "-Command", content]);
+            c
+        }
+        "cmd" => {
+            let mut c = StdCommand::new("cmd");
+            c.args(["/C", content]);
+            c
+        }
+        "bash" => {
+            let mut c = StdCommand::new("bash");
+            c.args(["-c", content]);
+            c
+        }
+        "python" => {
+            let mut c = StdCommand::new("python");
+            c.args(["-c", content]);
+            c
+        }
+        _ => anyhow::bail!("不支持的脚本解释器: {}", interpreter),
+    };
+    let output = cmd.output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("脚本执行失败: {}", stderr);
+    }
+    tracing::warn!("[响应] 脚本执行成功: {} bytes", stdout.len());
     Ok(())
 }

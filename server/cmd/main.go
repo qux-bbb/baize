@@ -28,41 +28,84 @@ type baizeServer struct {
 	pb.UnimplementedBaizeServiceServer
 	es     *store.Store
 	engine *engine.Engine
+	cmdBus *engine.CommandBus
 }
 
 func (s *baizeServer) AgentStream(stream pb.BaizeService_AgentStreamServer) error {
 	log.Println("[Connect] 新的 Agent 连接已建立")
-	eventCount := 0
+
+	// 等待第一个事件获取 agent_id
+	first, err := stream.Recv()
+	if err != nil {
+		log.Printf("[Connect] 接收首个事件失败: %v", err)
+		return err
+	}
+
+	agentID := first.GetAgentInfo().GetAgentId()
+	hostname := first.GetAgentInfo().GetHostname()
+	log.Printf("[Connect] Agent %s (%s) 已认证", agentID, hostname)
+
+	// 注册指令通道
+	cmdChan := make(chan *pb.Command, 64)
+	s.cmdBus.Register(agentID, func(cmd *pb.Command) error {
+		select {
+		case cmdChan <- cmd:
+			return nil
+		default:
+			log.Printf("[CmdBus] Agent %s 指令队列满，丢弃", agentID)
+			return nil
+		}
+	})
+	defer s.cmdBus.Unregister(agentID)
+
+	// 后台协程: 从 cmdChan 读取指令并写入 stream
+	go func() {
+		for cmd := range cmdChan {
+			if err := stream.Send(cmd); err != nil {
+				log.Printf("[CmdBus] Agent %s 发送指令失败: %v", agentID, err)
+				return
+			}
+			log.Printf("[CmdBus] Agent %s 已下发指令: %s", agentID, cmd.GetCommandId())
+		}
+	}()
+
+	// 处理首个事件
+	eventCount := 1
+	processEvent(first, s.es, s.engine)
 
 	for {
 		event, err := stream.Recv()
 		if err != nil {
-			log.Printf("[Connect] 接收结束 (%d 事件): %v", eventCount, err)
+			log.Printf("[Connect] %s 接收结束 (%d 事件): %v", agentID, eventCount, err)
+			close(cmdChan)
 			return err
 		}
-
-		agentID := event.GetAgentInfo().GetAgentId()
-		hostname := event.GetAgentInfo().GetHostname()
-		seq := event.GetSequenceId()
 		eventCount++
-
-		// 1. 写入 ES
-		if s.es != nil {
-			if err := s.es.WriteEvent(event); err != nil {
-				log.Printf("[ES] 写入失败: %v", err)
-			}
-		}
-
-		// 2. 检测引擎匹配
-		if s.engine != nil && s.engine.IsLoaded() {
-			fields := engine.EventToFieldMap(event)
-			rawJSON, _ := json.Marshal(fields)
-			s.engine.EvalAndAlert(fields, string(rawJSON))
-		}
-
-		// 3. 控制台打印
-		printEvent(event, agentID, hostname, seq)
+		processEvent(event, s.es, s.engine)
 	}
+}
+
+func processEvent(event *pb.Event, es *store.Store, eng *engine.Engine) {
+	agentID := event.GetAgentInfo().GetAgentId()
+	hostname := event.GetAgentInfo().GetHostname()
+	seq := event.GetSequenceId()
+
+	// 1. 写入 ES
+	if es != nil {
+		if err := es.WriteEvent(event); err != nil {
+			log.Printf("[ES] 写入失败: %v", err)
+		}
+	}
+
+	// 2. 检测引擎
+	if eng != nil && eng.IsLoaded() {
+		fields := engine.EventToFieldMap(event)
+		rawJSON, _ := json.Marshal(fields)
+		eng.EvalAndAlert(fields, string(rawJSON))
+	}
+
+	// 3. 控制台
+	printEvent(event, agentID, hostname, seq)
 }
 
 func printEvent(event *pb.Event, agentID, hostname string, seq uint64) {
@@ -171,7 +214,8 @@ func main() {
 	}
 
 	s := grpc.NewServer()
-	pb.RegisterBaizeServiceServer(s, &baizeServer{es: esStore, engine: eng})
+	cmdBus := engine.NewCommandBus()
+	pb.RegisterBaizeServiceServer(s, &baizeServer{es: esStore, engine: eng, cmdBus: cmdBus})
 
 	// 启动 HTTP API + Dashboard Server
 	{
