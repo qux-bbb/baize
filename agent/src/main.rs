@@ -77,9 +77,12 @@ async fn main() -> Result<()> {
         sysinfo::System::host_name().unwrap_or_else(|| "unknown".into())
     });
 
-    let agent_id = cli.agent_id.clone().unwrap_or_else(|| {
-        uuid::Uuid::new_v4().to_string()
-    });
+    // Agent ID：优先用命令行指定的，否则从文件读取/自动生成并持久化
+    let agent_id = if let Some(id) = cli.agent_id.clone() {
+        id
+    } else {
+        load_or_create_agent_id()
+    };
 
     info!("Agent {} ({}) 启动中...", agent_id, hostname);
 
@@ -227,6 +230,41 @@ async fn run(
 
     info!("Server 流已关闭");
     Ok(())
+}
+
+// ── Agent ID 持久化 ─────────────────────────────────────
+
+fn agent_id_path() -> std::path::PathBuf {
+    if cfg!(target_os = "windows") {
+        let dir = std::path::PathBuf::from(std::env::var("PROGRAMDATA").unwrap_or_else(|_| "C:\\ProgramData".into()));
+        dir.join("Baize").join("agent_id")
+    } else {
+        std::path::PathBuf::from("/var/lib/baize/agent_id")
+    }
+}
+
+fn load_or_create_agent_id() -> String {
+    let path = agent_id_path();
+
+    // 尝试读取已有的 agent_id
+    if let Ok(id) = std::fs::read_to_string(&path) {
+        let id = id.trim().to_string();
+        if !id.is_empty() {
+            tracing::info!("读取已保存的 Agent ID: {}", id);
+            return id;
+        }
+    }
+
+    // 生成新 UUID 并保存
+    let new_id = uuid::Uuid::new_v4().to_string();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match std::fs::write(&path, &new_id) {
+        Ok(_) => tracing::info!("Agent ID 已保存到: {:?}", path),
+        Err(e) => tracing::warn!("无法保存 Agent ID 文件: {:?}", e),
+    }
+    new_id
 }
 
 // ── 指令执行器 ──────────────────────────────────────────
