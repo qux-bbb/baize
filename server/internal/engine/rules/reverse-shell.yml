@@ -1,0 +1,40 @@
+title: 反向 Shell 检测
+id: b1a2c3d4-e5f6-7890-abcd-ef1234567890
+description: 检测常见的反向 Shell 连接特征（高端口出站、常见 shell 进程）
+author: Baize Team
+date: 2026-07-15
+level: high
+status: stable
+logsource:
+  category: network
+detection:
+  selection_high_port:
+    remote_port:
+      - 4444
+      - 5555
+      - 6666
+      - 7777
+      - 8888
+      - 9001
+      - 1337
+      - 31337
+  selection_suspicious_proc:
+    process_name:
+      - '*nc*'
+      - '*ncat*'
+      - '*powershell*'
+      - '*bash*'
+      - '*sh*'
+      - '*python*'
+      - '*perl*'
+  condition: selection_high_port and selection_suspicious_proc
+falsepositives:
+  - 合法远程管理工具
+tags:
+  - attack.execution
+  - attack.T1059
+fields:
+  - remote_ip
+  - remote_port
+  - process_name
+  - pid

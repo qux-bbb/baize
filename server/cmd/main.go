@@ -2,23 +2,27 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"google.golang.org/grpc"
 
 	pb "github.com/qux-bbb/baize/proto/gen/go/baize/v1"
+	"github.com/qux-bbb/baize/server/internal/engine"
 	"github.com/qux-bbb/baize/server/internal/store"
 )
 
 type baizeServer struct {
 	pb.UnimplementedBaizeServiceServer
-	es *store.Store
+	es     *store.Store
+	engine *engine.Engine
 }
 
 func (s *baizeServer) Connect(stream pb.BaizeService_ConnectServer) error {
@@ -37,56 +41,58 @@ func (s *baizeServer) Connect(stream pb.BaizeService_ConnectServer) error {
 		seq := event.GetSequenceId()
 		eventCount++
 
-		// 写入 ES
+		// 1. 写入 ES
 		if s.es != nil {
 			if err := s.es.WriteEvent(event); err != nil {
 				log.Printf("[ES] 写入失败: %v", err)
 			}
 		}
 
-		// 控制台打印摘要
-		switch e := event.GetEventType().(type) {
-		case *pb.Event_ProcessCreate:
-			log.Printf("[Event] Agent=%s (%s) seq=%d | 进程创建 PID=%d %s",
-				agentID, hostname, seq,
-				e.ProcessCreate.GetPid(), e.ProcessCreate.GetImagePath())
-		case *pb.Event_NetworkConnection:
-			log.Printf("[Event] Agent=%s (%s) seq=%d | 网络连接 %s:%d → %s:%d",
-				agentID, hostname, seq,
-				e.NetworkConnection.GetLocalIp(), e.NetworkConnection.GetLocalPort(),
-				e.NetworkConnection.GetRemoteIp(), e.NetworkConnection.GetRemotePort())
-		case *pb.Event_FileCreate:
-			log.Printf("[Event] Agent=%s (%s) seq=%d | 文件创建 %s",
-				agentID, hostname, seq, e.FileCreate.GetFilePath())
-		case *pb.Event_FileModify:
-			log.Printf("[Event] Agent=%s (%s) seq=%d | 文件修改 %s",
-				agentID, hostname, seq, e.FileModify.GetFilePath())
-		case *pb.Event_FileDelete:
-			log.Printf("[Event] Agent=%s (%s) seq=%d | 文件删除 %s",
-				agentID, hostname, seq, e.FileDelete.GetFilePath())
-		case *pb.Event_ProcessTerminate:
-			log.Printf("[Event] Agent=%s (%s) seq=%d | 进程终止 PID=%d",
-				agentID, hostname, seq, e.ProcessTerminate.GetPid())
-		case *pb.Event_RegistryChange:
-			log.Printf("[Event] Agent=%s (%s) seq=%d | 注册表变更 %s",
-				agentID, hostname, seq, e.RegistryChange.GetKeyPath())
-		case *pb.Event_ScheduledTask:
-			log.Printf("[Event] Agent=%s (%s) seq=%d | 计划任务变更 %s",
-				agentID, hostname, seq, e.ScheduledTask.GetTaskName())
-		case *pb.Event_YaraMatch:
-			log.Printf("[Event] Agent=%s (%s) seq=%d | YARA 命中 规则=%s 目标=%s",
-				agentID, hostname, seq,
-				e.YaraMatch.GetRuleName(), e.YaraMatch.GetTargetPath())
-		default:
-			log.Printf("[Event] Agent=%s (%s) seq=%d | 未知事件", agentID, hostname, seq)
+		// 2. 检测引擎匹配
+		if s.engine != nil && s.engine.IsLoaded() {
+			fields := engine.EventToFieldMap(event)
+			rawJSON, _ := json.Marshal(fields)
+			s.engine.EvalAndAlert(fields, string(rawJSON))
 		}
+
+		// 3. 控制台打印
+		printEvent(event, agentID, hostname, seq)
+	}
+}
+
+func printEvent(event *pb.Event, agentID, hostname string, seq uint64) {
+	switch e := event.GetEventType().(type) {
+	case *pb.Event_ProcessCreate:
+		log.Printf("[Event] Agent=%s (%s) seq=%d | 进程创建 PID=%d %s",
+			agentID, hostname, seq, e.ProcessCreate.GetPid(), e.ProcessCreate.GetImagePath())
+	case *pb.Event_NetworkConnection:
+		log.Printf("[Event] Agent=%s (%s) seq=%d | 网络连接 %s:%d → %s:%d",
+			agentID, hostname, seq,
+			e.NetworkConnection.GetLocalIp(), e.NetworkConnection.GetLocalPort(),
+			e.NetworkConnection.GetRemoteIp(), e.NetworkConnection.GetRemotePort())
+	case *pb.Event_FileCreate:
+		log.Printf("[Event] Agent=%s (%s) seq=%d | 文件创建 %s", agentID, hostname, seq, e.FileCreate.GetFilePath())
+	case *pb.Event_FileModify:
+		log.Printf("[Event] Agent=%s (%s) seq=%d | 文件修改 %s", agentID, hostname, seq, e.FileModify.GetFilePath())
+	case *pb.Event_FileDelete:
+		log.Printf("[Event] Agent=%s (%s) seq=%d | 文件删除 %s", agentID, hostname, seq, e.FileDelete.GetFilePath())
+	case *pb.Event_ProcessTerminate:
+		log.Printf("[Event] Agent=%s (%s) seq=%d | 进程终止 PID=%d", agentID, hostname, seq, e.ProcessTerminate.GetPid())
+	case *pb.Event_RegistryChange:
+		log.Printf("[Event] Agent=%s (%s) seq=%d | 注册表变更 %s", agentID, hostname, seq, e.RegistryChange.GetKeyPath())
+	case *pb.Event_ScheduledTask:
+		log.Printf("[Event] Agent=%s (%s) seq=%d | 计划任务变更 %s", agentID, hostname, seq, e.ScheduledTask.GetTaskName())
+	case *pb.Event_YaraMatch:
+		log.Printf("[Event] Agent=%s (%s) seq=%d | YARA 命中 规则=%s 目标=%s",
+			agentID, hostname, seq, e.YaraMatch.GetRuleName(), e.YaraMatch.GetTargetPath())
+	default:
+		log.Printf("[Event] Agent=%s (%s) seq=%d | 未知事件", agentID, hostname, seq)
 	}
 }
 
 func (s *baizeServer) Heartbeat(ctx context.Context, info *pb.AgentInfo) (*pb.Empty, error) {
 	log.Printf("[Heartbeat] Agent=%s (%s) OS=%s v%s",
-		info.GetAgentId(), info.GetHostname(),
-		info.GetOsType(), info.GetOsVersion())
+		info.GetAgentId(), info.GetHostname(), info.GetOsType(), info.GetOsVersion())
 	return &pb.Empty{}, nil
 }
 
@@ -99,6 +105,41 @@ func (s *baizeServer) ReportCommandResult(ctx context.Context, result *pb.Comman
 	return &pb.Empty{}, nil
 }
 
+func initEngine(esStore *store.Store) *engine.Engine {
+	eng := engine.New(esStore)
+
+	// 将内嵌规则写入临时目录
+	tmpDir, err := os.MkdirTemp("", "baize-rules-*")
+	if err != nil {
+		log.Printf("[Engine] 创建临时目录失败: %v", err)
+		return eng
+	}
+
+	ruleNames, err := engine.BuiltInRuleNames()
+	if err != nil {
+		log.Printf("[Engine] 读取内嵌规则失败: %v", err)
+		return eng
+	}
+
+	for _, name := range ruleNames {
+		data, err := engine.ReadBuiltInRule(name)
+		if err != nil {
+			log.Printf("[Engine] 读取规则 %s 失败: %v", name, err)
+			continue
+		}
+		dest := filepath.Join(tmpDir, name)
+		if err := os.WriteFile(dest, data, 0644); err != nil {
+			log.Printf("[Engine] 写入规则文件 %s 失败: %v", dest, err)
+			continue
+		}
+	}
+
+	if err := eng.LoadRules(tmpDir); err != nil {
+		log.Printf("[Engine] 加载规则失败: %v", err)
+	}
+	return eng
+}
+
 func main() {
 	port := flag.Int("port", 50051, "gRPC 端口")
 	esAddr := flag.String("es", "http://192.168.116.131:9200", "Elasticsearch 地址")
@@ -106,7 +147,7 @@ func main() {
 	esPass := flag.String("es-pass", "elastic123", "ES 密码")
 	flag.Parse()
 
-	// 初始化 ES 存储
+	// 初始化 ES
 	log.Printf("[ES] 连接 %s ...", *esAddr)
 	esStore, err := store.New(*esAddr, *esUser, *esPass)
 	if err != nil {
@@ -116,15 +157,17 @@ func main() {
 		defer esStore.Close()
 	}
 
+	// 初始化检测引擎
+	eng := initEngine(esStore)
+
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
 	if err != nil {
 		log.Fatalf("监听端口 %d 失败: %v", *port, err)
 	}
 
 	s := grpc.NewServer()
-	pb.RegisterBaizeServiceServer(s, &baizeServer{es: esStore})
+	pb.RegisterBaizeServiceServer(s, &baizeServer{es: esStore, engine: eng})
 
-	// 优雅退出
 	go func() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -137,6 +180,7 @@ func main() {
 	log.Printf("  Baize (白泽) EDR Server")
 	log.Printf("  gRPC 端口: %d", *port)
 	log.Printf("  ES 地址:   %s", *esAddr)
+	log.Printf("  检测引擎:  %d 条规则已加载", eng.RuleCount())
 	log.Printf("  等待 Agent 连接...")
 	log.Printf("═══════════════════════════════════════════")
 

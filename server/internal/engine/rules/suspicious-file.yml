@@ -1,0 +1,45 @@
+title: 可疑文件创建 — 系统敏感目录
+id: f0a1b2c3-d4e5-6789-0123-456789abcdef0
+description: 检测在系统敏感目录中创建的可疑文件
+author: Baize Team
+date: 2026-07-15
+level: medium
+status: stable
+logsource:
+  category: file
+detection:
+  selection_sensitive_dir:
+    file_path:
+      - 'C:\Windows\*'
+      - 'C:\Windows\System32\*'
+      - 'C:\ProgramData\*'
+  selection_suspicious_ext:
+    file_path:
+      - '*.exe'
+      - '*.dll'
+      - '*.ps1'
+      - '*.vbs'
+      - '*.js'
+      - '*.bat'
+      - '*.scr'
+  selection_system_proc:
+    process_name:
+      - '*wscript*'
+      - '*cscript*'
+      - '*mshta*'
+      - '*powershell*'
+      - '*cmd*'
+      - '*rundll32*'
+      - '*regsvr32*'
+  condition: selection_sensitive_dir and selection_suspicious_ext and selection_system_proc
+falsepositives:
+  - 合法软件安装
+  - 系统更新
+tags:
+  - attack.execution
+  - attack.T1059
+fields:
+  - file_path
+  - file_size
+  - pid
+  - process_name

@@ -1,0 +1,33 @@
+title: 横向移动 — 远程服务创建
+id: e0f1a2b3-c4d5-6789-0123-456789abcdef
+description: 检测通过远程服务/计划任务进行的横向移动
+author: Baize Team
+date: 2026-07-15
+level: high
+status: stable
+logsource:
+  category: scheduled_task
+detection:
+  selection_suspicious_name:
+    task_name:
+      - '*Update*'
+      - '*Cleanup*'
+      - '*Backup*'
+      - '*SysMain*'
+  selection_suspicious_path:
+    task_path:
+      - '*\\admin$\\*'
+      - '*\\C$\\*'
+      - '*\\ADMIN$\\*'
+      - '*powershell*'
+      - '*wmic*'
+  condition: selection_suspicious_name or selection_suspicious_path
+falsepositives:
+  - 合法系统管理操作
+tags:
+  - attack.lateral_movement
+  - attack.T1053.005
+fields:
+  - task_name
+  - task_path
+  - pid

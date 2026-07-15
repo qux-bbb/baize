@@ -98,6 +98,30 @@ func (s *Store) WriteEvent(event *pb.Event) error {
 	return s.writeDoc(eventsIndexPrefix, event.GetSequenceId(), body)
 }
 
+// WriteAlert 写入一条告警到 ES
+func (s *Store) WriteAlert(alert map[string]interface{}) error {
+	index := fmt.Sprintf("%s-%s", alertsIndexPrefix, time.Now().Format("2006.01.02"))
+	jsonBody, err := json.Marshal(alert)
+	if err != nil {
+		return fmt.Errorf("JSON 序列化失败: %w", err)
+	}
+	req := esapi.IndexRequest{
+		Index:   index,
+		Body:    bytes.NewReader(jsonBody),
+		Refresh: "false",
+	}
+	ctx := context.Background()
+	res, err := req.Do(ctx, s.client)
+	if err != nil {
+		return fmt.Errorf("写入告警 ES 失败: %w", err)
+	}
+	defer res.Body.Close()
+	if res.IsError() {
+		return fmt.Errorf("ES 告警写入错误: %s", res.String())
+	}
+	return nil
+}
+
 // writeDoc 通用 ES 文档写入
 func (s *Store) writeDoc(prefix string, seq uint64, body map[string]any) error {
 	index := fmt.Sprintf("%s-%s", prefix, time.Now().Format("2006.01.02"))

@@ -1,0 +1,31 @@
+title: 注册表持久化 — Run 键
+id: d4e5f6a7-b8c9-0123-4567-890abcdef012
+description: 检测写入 HKLM\...\Run 或 HKCU\...\Run 的持久化行为
+author: Baize Team
+date: 2026-07-15
+level: high
+status: stable
+logsource:
+  category: registry
+detection:
+  selection_run_key:
+    registry_key:
+      - '*\CurrentVersion\Run*'
+      - '*\CurrentVersion\RunOnce*'
+  selection_suspicious_path:
+    registry_value_data:
+      - '*\AppData\*'
+      - '*\Temp\*'
+      - '*\Downloads\*'
+      - '*C:\\Users\\Public\\*'
+  condition: selection_run_key and selection_suspicious_path
+falsepositives:
+  - 合法软件安装
+tags:
+  - attack.persistence
+  - attack.T1547.001
+fields:
+  - registry_key
+  - registry_value_name
+  - registry_value_data
+  - pid

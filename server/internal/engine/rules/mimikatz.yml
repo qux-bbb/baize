@@ -1,0 +1,32 @@
+title: Mimikatz 检测
+id: 78b3d4c1-0f2a-4d7e-9a6b-3c2f1a8e5d0a
+description: 检测 Mimikatz 已知特征（命令行、文件名、内存特征）
+author: Baize Team
+date: 2026-07-15
+level: critical
+status: stable
+logsource:
+  category: process
+  product: windows
+detection:
+  selection_cmdline:
+    command_line:
+      - '*mimikatz*'
+      - '*sekurlsa::*'
+      - '*logonpasswords*'
+      - '*kerberos::*'
+      - '*lsadump::*'
+  selection_image:
+    image_path:
+      - '*\mimikatz*'
+      - '*\mim.exe'
+  condition: selection_cmdline or selection_image
+falsepositives:
+  - 合法安全测试
+tags:
+  - attack.credential_access
+  - attack.T1003
+fields:
+  - command_line
+  - image_path
+  - pid
