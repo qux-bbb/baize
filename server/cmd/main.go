@@ -1,12 +1,14 @@
 package main
-
 import (
 	"context"
+	"embed"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -15,10 +17,13 @@ import (
 	"google.golang.org/grpc"
 
 	pb "github.com/qux-bbb/baize/proto/gen/go/baize/v1"
+	"github.com/qux-bbb/baize/server/internal/api"
 	"github.com/qux-bbb/baize/server/internal/engine"
 	"github.com/qux-bbb/baize/server/internal/store"
 )
 
+//go:embed web/* web/assets/*
+var webFS embed.FS
 type baizeServer struct {
 	pb.UnimplementedBaizeServiceServer
 	es     *store.Store
@@ -167,6 +172,40 @@ func main() {
 
 	s := grpc.NewServer()
 	pb.RegisterBaizeServiceServer(s, &baizeServer{es: esStore, engine: eng})
+
+	// 启动 HTTP API + Dashboard Server
+	{
+		mux := http.NewServeMux()
+		if esStore != nil {
+			apiHandler := api.New(esStore.ESClient())
+			mux.HandleFunc("GET /api/hosts", apiHandler.Hosts)
+			mux.HandleFunc("GET /api/alerts", apiHandler.Alerts)
+			mux.HandleFunc("GET /api/events", apiHandler.Events)
+		}
+		mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
+			json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		})
+		// 内嵌 Dashboard 静态文件
+		webSub, _ := fs.Sub(webFS, "web")
+		fileSrv := http.FileServer(http.FS(webSub))
+		mux.Handle("GET /assets/", fileSrv)
+		mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+			data, _ := webFS.ReadFile("web/index.html")
+			w.Header().Set("Content-Type", "text/html")
+			w.Write(data)
+		})
+		httpSrv := &http.Server{
+			Addr:    fmt.Sprintf(":%d", 8080),
+			Handler: api.CORSMiddleware(mux),
+		}
+		go func() {
+			log.Printf("[HTTP] Dashboard + API: :8080")
+			if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Printf("[HTTP] 错误: %v", err)
+			}
+		}()
+		defer httpSrv.Shutdown(context.Background())
+	}
 
 	go func() {
 		sig := make(chan os.Signal, 1)

@@ -149,9 +149,14 @@ func (s *Store) writeDoc(prefix string, seq uint64, body map[string]any) error {
 	return nil
 }
 
-// Close 关闭 ES 连接（go-elasticsearch 自动管理连接池，此方法仅作占位）
+// Close 关闭 ES 连接
 func (s *Store) Close() {
 	log.Println("[ES] 连接池已关闭")
+}
+
+// ESClient 返回底层 ES 客户端（供 API 层使用）
+func (s *Store) ESClient() *elasticsearch.Client {
+	return s.client
 }
 
 // ── 辅助函数 ──────────────────────────────────────────────
