@@ -1,9 +1,7 @@
 // Windows 服务化
 use anyhow::{Context, Result};
 use std::ffi::OsString;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use tracing::info;
 use windows_service::{
     service::{
