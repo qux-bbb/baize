@@ -1,6 +1,9 @@
 // Baize (白泽) EDR Agent — Rust 版本
 mod collector;
 
+#[cfg(windows)]
+mod service;
+
 pub mod pb {
     tonic::include_proto!("baize.v1");
 }
@@ -35,6 +38,15 @@ struct Cli {
     watch: String,
     #[arg(long)]
     hostname: Option<String>,
+    /// 安装为 Windows 服务
+    #[arg(long)]
+    install: bool,
+    /// 卸载 Windows 服务
+    #[arg(long)]
+    uninstall: bool,
+    /// 以 Windows 服务模式运行（由 SCM 调用）
+    #[arg(long)]
+    service: bool,
 }
 
 #[tokio::main]
@@ -45,6 +57,20 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
+    // 服务管理命令（Windows only）
+    #[cfg(windows)]
+    {
+        if cli.install {
+            return service::install().map_err(|e| anyhow::anyhow!("{}", e));
+        }
+        if cli.uninstall {
+            return service::uninstall().map_err(|e| anyhow::anyhow!("{}", e));
+        }
+        if cli.service {
+            info!("[Service] 以 Windows 服务模式启动...");
+            return service::run_as_service().map_err(|e| anyhow::anyhow!("{}", e));
+        }
+    }
     let sys = Arc::new(tokio::sync::Mutex::new(System::new_all()));
 
     let hostname = cli.hostname.clone().unwrap_or_else(|| {
