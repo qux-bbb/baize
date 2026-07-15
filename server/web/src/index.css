@@ -39,6 +39,8 @@ h1 { font-family: var(--font); font-size: 1.25rem; font-weight: 700; }
 .card:hover { border-color: var(--accent); }
 .card-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
 .card-body { font-size: 0.8rem; color: var(--muted); }
+.card-body .row { display: flex; gap: 0.4rem; padding: 0.15rem 0; }
+.card-body .label { color: #475569; min-width: 42px; flex-shrink: 0; }
 .dot { width: 8px; height: 8px; border-radius: 50%; }
 .dot.green { background: #34d399; }
 .ago { font-size: 0.75rem; color: var(--muted); margin-top: 0.3rem; }

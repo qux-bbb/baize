@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback } from 'react'
 
 interface Host {
   agent_id: string; hostname: string; os_type: string; os_version: string
-  event_count: number; last_seen: string; ips?: string[]
+  agent_version?: string; arch?: string; event_count: number
+  last_seen: string; ips?: string[]
 }
 
 interface Alert {
@@ -101,9 +102,15 @@ export default function App() {
               <div key={h.agent_id} className="card" onClick={() => { setHostFilter(h.hostname); setTab('events') }}>
                 <div className="card-header"><span className="dot green" /><strong>{h.hostname}</strong></div>
                 <div className="card-body">
-                  <div>OS: {h.os_type} {h.os_version}</div>
-                  <div>事件: {h.event_count.toLocaleString()}</div>
-                  <div className="ago">{timeAgo(h.last_seen)}</div>
+                  <div className="row"><span className="label">OS</span><span>{h.os_type} {h.os_version}</span></div>
+                  <div className="row"><span className="label">架构</span><span>{h.arch || '-'}</span></div>
+                  <div className="row"><span className="label">Agent</span><span className="mono">{h.agent_version || '-'}</span></div>
+                  <div className="row"><span className="label">事件</span><span>{h.event_count.toLocaleString()}</span></div>
+                  {h.ips && h.ips.length > 0 && (
+                    <div className="row"><span className="label">IP</span><span className="mono">{h.ips.join(', ')}</span></div>
+                  )}
+                  <div className="row"><span className="label">ID</span><span className="mono" style={{fontSize:'0.65rem'}}>{h.agent_id.slice(0,19)}...</span></div>
+                  <div className="ago" style={{marginTop:'0.3rem'}}>最后活跃: {timeAgo(h.last_seen)}</div>
                 </div>
               </div>
             ))}

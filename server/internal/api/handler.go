@@ -29,13 +29,15 @@ func New(es *elasticsearch.Client) *Handler {
 // ── 主机列表 ──────────────────────────────────────────────
 
 type HostSummary struct {
-	AgentID    string   `json:"agent_id"`
-	Hostname   string   `json:"hostname"`
-	OSType     string   `json:"os_type"`
-	OSVersion  string   `json:"os_version"`
-	EventCount int      `json:"event_count"`
-	LastSeen   string   `json:"last_seen"`
-	IPs        []string `json:"ips,omitempty"`
+	AgentID      string   `json:"agent_id"`
+	Hostname     string   `json:"hostname"`
+	OSType       string   `json:"os_type"`
+	OSVersion    string   `json:"os_version"`
+	AgentVersion string   `json:"agent_version,omitempty"`
+	Arch         string   `json:"arch,omitempty"`
+	EventCount   int      `json:"event_count"`
+	LastSeen     string   `json:"last_seen"`
+	IPs          []string `json:"ips,omitempty"`
 }
 
 func (h *Handler) Hosts(w http.ResponseWriter, r *http.Request) {
@@ -86,13 +88,15 @@ func (h *Handler) Hosts(w http.ResponseWriter, r *http.Request) {
 				}
 				src, _ := top[0].(map[string]any)["_source"].(map[string]any)
 				hosts = append(hosts, HostSummary{
-					AgentID:    getStr(src, "agent_id"),
-					Hostname:   getStr(src, "hostname"),
-					OSType:     getStr(src, "os_type"),
-					OSVersion:  getStr(src, "os_version"),
-					EventCount: int(getFloat(bkt, "doc_count")),
-					LastSeen:   getStr(src, "@timestamp"),
-					IPs:        getStrs(src, "ip_addresses"),
+					AgentID:      getStr(src, "agent_id"),
+					Hostname:     getStr(src, "hostname"),
+					OSType:       getStr(src, "os_type"),
+					OSVersion:    getStr(src, "os_version"),
+					AgentVersion: getStr(src, "agent_version"),
+					Arch:         getStr(src, "arch"),
+					EventCount:   int(getFloat(bkt, "doc_count")),
+					LastSeen:     getStr(src, "@timestamp"),
+					IPs:          getStrs(src, "ip_addresses"),
 				})
 			}
 		}
