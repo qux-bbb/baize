@@ -1,0 +1,30 @@
+# 编译产物
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go
+*.test
+*.out
+cmd/                     # go build 二进制输出
+
+# Rust
+agent/target/
+**/*.rs.bk
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Proto generated (依赖 protoc，不提交)
+# proto/gen/  ← 如果你想提交生成的代码就注释掉这行
+
+# 安装包 / 临时文件
+*.zip
+*-init.exe
+*.log
+/temp/

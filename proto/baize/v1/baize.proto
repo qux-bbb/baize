@@ -1,0 +1,253 @@
+syntax = "proto3";
+package baize.v1;
+
+option go_package = "github.com/qux-bbb/baize/proto/gen/go/baize/v1;baizev1";
+
+// ============================================================================
+// Baize (白泽) EDR — 协议定义
+// Rust Agent ↔ Go Server 之间的通信契约
+// 通信方式: gRPC 双向流 (Bidirectional Streaming)
+// ============================================================================
+
+// ---------------------------------------------------------------------------
+// 1. Agent 元信息
+// ---------------------------------------------------------------------------
+
+// Agent 注册 / 心跳时上报的主机信息
+message AgentInfo {
+  string agent_id = 1;            // Agent 唯一标识 (UUID v4, 首次启动生成)
+  string hostname = 2;            // 主机名
+  string os_type = 3;             // windows / linux / macos
+  string os_version = 4;          // 10.0.19045 / 5.15.0-76-generic
+  string kernel_version = 5;      // 内核版本
+  string agent_version = 6;       // 0.1.0
+  repeated string ip_addresses = 7;  // 所有网卡 IP
+  uint64 boot_time_ns = 8;        // 系统启动时间戳 (纳秒)
+  string arch = 9;                // x86_64 / aarch64
+}
+
+// ---------------------------------------------------------------------------
+// 2. 遥测事件 (Telemetry Events)
+//    每个事件类型独立定义，通过 Event.wrapper 的 oneof 分发
+// ---------------------------------------------------------------------------
+
+// 进程创建 — 最核心的检测数据源
+message ProcessCreateEvent {
+  uint64 pid = 1;                 // 进程 PID
+  uint64 parent_pid = 2;          // 父进程 PID
+  string command_line = 3;        // 完整命令行 (含参数, 已脱敏?)
+  string image_path = 4;          // 可执行文件绝对路径
+  string hash_sha256 = 5;         // SHA256 哈希 (Agent 算好再上报)
+  uint64 timestamp_ns = 6;        // 事件发生时间 (纳秒)
+  string user = 7;                // 运行用户 (DOMAIN\username)
+  uint32 session_id = 8;          // Windows 登录 Session ID
+  bool is_elevated = 9;           // 是否以管理员/root 权限运行
+}
+
+// 进程终止
+message ProcessTerminateEvent {
+  uint64 pid = 1;
+  uint64 timestamp_ns = 2;
+  uint32 exit_code = 3;
+}
+
+// 文件创建
+message FileCreateEvent {
+  string file_path = 1;           // 文件绝对路径
+  uint64 file_size = 2;           // 文件大小 (字节)
+  string hash_sha256 = 3;         // 文件 SHA256
+  uint64 pid = 4;                 // 创建该文件的进程 PID
+  string process_name = 5;        // 创建进程名
+  uint64 timestamp_ns = 6;
+}
+
+// 文件修改
+message FileModifyEvent {
+  string file_path = 1;
+  uint64 file_size_before = 2;
+  uint64 file_size_after = 3;
+  string hash_sha256_before = 4;
+  string hash_sha256_after = 5;
+  uint64 pid = 6;
+  string process_name = 7;
+  uint64 timestamp_ns = 8;
+}
+
+// 文件删除
+message FileDeleteEvent {
+  string file_path = 1;
+  uint64 original_size = 2;
+  string hash_sha256 = 3;
+  uint64 pid = 4;
+  string process_name = 5;
+  uint64 timestamp_ns = 6;
+}
+
+// 网络连接
+message NetworkConnectionEvent {
+  uint64 pid = 1;                 // 发起连接的进程 PID
+  string process_name = 2;        // 进程名
+  string local_ip = 3;            // 本端 IP
+  uint32 local_port = 4;          // 本端端口
+  string remote_ip = 5;           // 远端 IP
+  uint32 remote_port = 6;         // 远端端口
+  string protocol = 7;            // tcp / udp
+  string direction = 8;           // inbound / outbound
+  uint64 timestamp_ns = 9;
+}
+
+// 注册表变更 (仅 Windows)
+message RegistryChangeEvent {
+  string key_path = 1;            // 注册表路径 (如 HKLM\SYSTEM\CurrentControlSet\...)
+  string value_name = 2;          // 值名称
+  string value_data = 3;          // 值内容 (字符串化)
+  string operation = 4;           // create / modify / delete
+  uint64 pid = 5;                 // 修改注册表的进程
+  string process_name = 6;
+  uint64 timestamp_ns = 7;
+}
+
+// 计划任务 / 服务 / 自启动项变更
+message ScheduledTaskEvent {
+  string task_name = 1;           // 任务/服务名
+  string task_path = 2;           // 可执行文件路径 (如果有)
+  string arguments = 3;           // 启动参数
+  string trigger_type = 4;        // 触发方式: boot / logon / schedule / event
+  string operation = 5;           // create / modify / delete
+  uint64 pid = 6;
+  string process_name = 7;
+  uint64 timestamp_ns = 8;
+}
+
+// YARA 规则匹配结果
+message YaraMatchEvent {
+  string rule_name = 1;           // 命中的规则名
+  string rule_id = 2;             // 规则 ID
+  string target_path = 3;         // 匹配目标 (文件路径 / 内存区域描述)
+  string matched_string = 4;      // 匹配到的字符串/特征(截取)
+  string scan_type = 5;           // file / memory / process
+  uint64 pid = 6;                 // 如果扫描的是进程, 记下 PID
+  uint64 timestamp_ns = 7;
+}
+
+// ---------------------------------------------------------------------------
+// 3. 事件包装器 (Agent → Server 的上报单元)
+// ---------------------------------------------------------------------------
+
+// 每个 Event 包含 Agent 身份 + 一个具体事件
+message Event {
+  AgentInfo agent_info = 1;       // Agent 身份 (首次连接全量, 后续可增量?)
+  uint64 sequence_id = 2;         // Agent 端序列号 (严格递增, 用于去重/保序)
+  oneof event_type {
+    ProcessCreateEvent process_create = 10;
+    ProcessTerminateEvent process_terminate = 11;
+    FileCreateEvent file_create = 12;
+    FileModifyEvent file_modify = 13;
+    FileDeleteEvent file_delete = 14;
+    NetworkConnectionEvent network_connection = 15;
+    RegistryChangeEvent registry_change = 16;
+    ScheduledTaskEvent scheduled_task = 17;
+    YaraMatchEvent yara_match = 18;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 4. 告警 (Detection Engine 输出)
+// ---------------------------------------------------------------------------
+
+message Alert {
+  string alert_id = 1;            // 告警唯一 ID
+  string rule_name = 2;           // Sigma 规则名
+  string rule_id = 3;             // Sigma 规则 ID
+  string severity = 4;            // critical / high / medium / low / info
+  string description = 5;         // 告警描述
+  string mitre_tactic = 6;        // MITRE ATT&CK 战术 (如 TA0003 — Persistence)
+  string mitre_technique = 7;     // MITRE ATT&CK 技术 (如 T1053.005 — Scheduled Task)
+  uint64 timestamp_ns = 8;
+  string hostname = 9;            // 来源主机
+  string agent_id = 10;
+  // 触发了该告警的原始事件 (Engine 填充)
+  repeated Event source_events = 11;
+}
+
+// ---------------------------------------------------------------------------
+// 5. 指令 (Server → Agent 的下发单元)
+// ---------------------------------------------------------------------------
+
+// 隔离/解除隔离主机
+message IsolateCommand {
+  bool isolate = 1;               // true = 隔离, false = 解除隔离
+  string reason = 2;              // 原因描述
+}
+
+// 远程杀进程
+message KillProcessCommand {
+  uint64 pid = 1;                 // 目标进程 PID
+  string reason = 2;              // 原因
+}
+
+// 远程删除文件
+message DeleteFileCommand {
+  string file_path = 1;           // 目标文件路径
+  bool force = 2;                 // 是否强制删除 (如绕过回收站)
+  string reason = 3;
+}
+
+// 远程执行脚本
+message ExecuteScriptCommand {
+  string script_content = 1;       // 脚本内容
+  string interpreter = 2;          // powershell / cmd / bash / python
+  uint32 timeout_secs = 3;         // 超时时间 (秒), 0 = 不限
+  string reason = 4;
+}
+
+// 指令包装器
+message Command {
+  string command_id = 1;          // 指令唯一 ID (Server 生成)
+  uint64 issued_at_ns = 2;        // 下发时间
+  oneof command_type {
+    IsolateCommand isolate = 10;
+    KillProcessCommand kill_process = 11;
+    DeleteFileCommand delete_file = 12;
+    ExecuteScriptCommand execute_script = 13;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 6. 指令执行结果 (Agent → Server 的报告)
+// ---------------------------------------------------------------------------
+
+message CommandResult {
+  string command_id = 1;          // 对应的指令 ID
+  bool success = 2;               // 是否成功
+  string error_message = 3;       // 失败原因 (success=true 时可为空)
+  string output = 4;              // 脚本执行的标准输出 (仅 ExecuteScript)
+  uint64 completed_at_ns = 5;     // 完成时间
+}
+
+// ---------------------------------------------------------------------------
+// 7. 空消息 (用于无返回的 RPC)
+// ---------------------------------------------------------------------------
+
+message Empty {}
+
+// ---------------------------------------------------------------------------
+// 8. gRPC 服务定义
+// ---------------------------------------------------------------------------
+
+service BaizeService {
+
+  // 双向流: Agent 维持长连接
+  //   → Agent 上传 Event 流 (实时遥测)
+  //   ← Server 下发 Command 流 (检测命中/手动响应)
+  //
+  // 生命周期: Agent 启动 → OpenStream → 持续收发 → Agent 停止 → Close
+  // 断线重连由 Agent 负责 (指数退避)
+  rpc Connect(stream Event) returns (stream Command);
+
+  // 单向: Agent 上报指令执行结果
+  rpc ReportCommandResult(CommandResult) returns (Empty);
+
+  // 单向: Agent 上报运行状态/健康检查
+  rpc Heartbeat(AgentInfo) returns (Empty);
+}
