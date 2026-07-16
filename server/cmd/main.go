@@ -76,7 +76,12 @@ func (s *baizeServer) AgentStream(stream pb.BaizeService_AgentStreamServer) erro
 	for {
 		event, err := stream.Recv()
 		if err != nil {
-			log.Printf("[Connect] %s 接收结束 (%d 事件): %v", agentID, eventCount, err)
+			// 检查是否是客户端主动断开
+			if ctxErr := stream.Context().Err(); ctxErr != nil {
+				log.Printf("[Connect] %s 已断开连接 (%d 事件)", agentID, eventCount)
+			} else {
+				log.Printf("[Connect] %s 接收结束 (%d 事件): %v", agentID, eventCount, err)
+			}
 			close(cmdChan)
 			return err
 		}
@@ -219,7 +224,7 @@ func main() {
 	{
 		mux := http.NewServeMux()
 		if bleveStore != nil {
-			apiHandler := api.New(bleveStore)
+			apiHandler := api.New(bleveStore, cmdBus)
 			mux.HandleFunc("GET /api/hosts", apiHandler.Hosts)
 			mux.HandleFunc("GET /api/alerts", apiHandler.Alerts)
 			mux.HandleFunc("GET /api/alert", apiHandler.AlertDetail)

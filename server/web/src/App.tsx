@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 
 interface Host {
-  agent_id: string; hostname: string; os_type: string; os_version: string
-  agent_version?: string; arch?: string; event_count: number
-  last_seen: string; ips?: string[]
+  agent_id: string; hostname: string; os_type: string; os_version: string;
+  arch: string; agent_version: string; event_count: number; last_seen: string;
+  ips?: string[]; is_online: boolean;
 }
 
 interface Alert {
@@ -131,7 +131,7 @@ export default function App() {
           <div className="grid">
             {hosts.map(h => (
               <div key={h.agent_id} className="card" onClick={() => navigate('hosts/' + h.agent_id)}>
-                <div className="card-header"><span className="dot green" /><strong>{h.hostname}</strong></div>
+                <div className="card-header"><span className={`dot ${h.is_online ? 'green' : 'gray'}`} /><strong>{h.hostname}</strong><span className={`badge ${h.is_online ? 'online' : 'offline'}`}>{h.is_online ? '在线' : '离线'}</span></div>
                 <div className="card-body">
                   <div className="row"><span className="label">OS</span><span>{h.os_type} {h.os_version}</span></div>
                   <div className="row"><span className="label">架构</span><span>{h.arch || '-'}</span></div>

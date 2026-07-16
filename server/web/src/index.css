@@ -43,6 +43,10 @@ h1 { font-family: var(--font); font-size: 1.25rem; font-weight: 700; }
 .card-body .label { color: #475569; min-width: 42px; flex-shrink: 0; }
 .dot { width: 8px; height: 8px; border-radius: 50%; }
 .dot.green { background: #34d399; }
+.dot.gray { background: #888; }
+.card-header .badge { font-size: 0.65rem; padding: 1px 6px; border-radius: 8px; margin-left: 6px; }
+.badge.online { background: #d1fae5; color: #065f46; }
+.badge.offline { background: #e5e7eb; color: #6b7280; }
 .ago { font-size: 0.75rem; color: var(--muted); margin-top: 0.3rem; }
 
 /* Table */

@@ -169,7 +169,13 @@ func (s *Store) WriteAlert(alert map[string]interface{}) error {
 // ── 查询方法 ──────────────────────────────────────────────
 
 // SearchHosts 查询所有主机
-func (s *Store) SearchHosts() ([]HostResult, error) {
+func (s *Store) SearchHosts(onlineIDs ...[]string) ([]HostResult, error) {
+	online := make(map[string]bool)
+	if len(onlineIDs) > 0 {
+		for _, id := range onlineIDs[0] {
+			online[id] = true
+		}
+	}
 	// 查询全部事件，获取所有 agent_id
 	q := bleve.NewQueryStringQuery(`type:event`)
 	search := bleve.NewSearchRequest(q)
@@ -193,6 +199,7 @@ func (s *Store) SearchHosts() ([]HostResult, error) {
 			existing = &HostResult{
 				AgentID:  agentID,
 				Hostname: getFieldStr(hit.Fields, "hostname"),
+				IsOnline: online[agentID],
 			}
 			hostMap[agentID] = existing
 			hostOrder = append(hostOrder, agentID)
@@ -443,14 +450,15 @@ func min(a, b int) int {
 }
 
 type HostResult struct {
-	AgentID      string `json:"agent_id"`
-	Hostname     string `json:"hostname"`
-	OSType       string `json:"os_type"`
-	OSVersion    string `json:"os_version"`
-	AgentVersion string `json:"agent_version,omitempty"`
-	Arch         string `json:"arch,omitempty"`
-	EventCount   int    `json:"event_count"`
-	LastSeen     string `json:"last_seen"`
+	AgentID    string `json:"agent_id"`
+	Hostname   string `json:"hostname"`
+	EventCount int    `json:"event_count"`
+	LastSeen   string `json:"last_seen"`
+	IsOnline   bool   `json:"is_online"`
+	OSType      string `json:"os_type"`
+	OSVersion   string `json:"os_version"`
+	AgentVersion string `json:"agent_version"`
+	Arch        string `json:"arch"`
 }
 
 type AlertResult struct {

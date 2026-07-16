@@ -137,18 +137,7 @@ async fn run(
         }
     });
 
-    // Windows EventLog 实时采集（进程创建 + 网络连接）
-    #[cfg(target_os = "windows")]
-    {
-        let el_tx = tx.clone();
-        tokio::spawn(async move {
-            if let Err(e) = collector::windows::start(el_tx).await {
-                error!("EventLog 采集器错误: {:?}", e);
-            }
-        });
-    }
-
-    // Windows WMI 实时进程监控（无需管理员权限，在独立线程运行）
+    // 进程事件由 EvtSubscribe 实时采集（见 wmi_process.rs），旧 EventLog 轮询已禁用
     #[cfg(target_os = "windows")]
     {
         let wmi_tx = tx.clone();

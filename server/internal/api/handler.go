@@ -5,21 +5,24 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/qux-bbb/baize/server/internal/engine"
 	"github.com/qux-bbb/baize/server/internal/store"
 )
 
 type Handler struct {
-	store *store.Store
+	store   *store.Store
+	cmdBus  *engine.CommandBus
 }
 
-func New(s *store.Store) *Handler {
-	return &Handler{store: s}
+func New(s *store.Store, cmdBus *engine.CommandBus) *Handler {
+	return &Handler{store: s, cmdBus: cmdBus}
 }
 
 // ── 主机列表 ──────────────────────────────────────────────
 
 func (h *Handler) Hosts(w http.ResponseWriter, r *http.Request) {
-	hosts, err := h.store.SearchHosts()
+	onlineIDs := h.cmdBus.AgentIDs()
+	hosts, err := h.store.SearchHosts(onlineIDs)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
