@@ -113,6 +113,28 @@ async fn main() -> Result<()> {
     }
 }
 
+/// 获取默认文件监控目录（按平台区分）
+fn get_default_watch_dirs() -> Vec<String> {
+    #[cfg(target_os = "windows")]
+    {
+        // Windows 临时目录 + 用户下载目录
+        let mut dirs = vec![
+            "C:\\Windows\\Temp".into(),
+            std::env::var("TEMP").unwrap_or_else(|_| "C:\\Temp".into()),
+        ];
+        if let Ok(home) = std::env::var("USERPROFILE") {
+            dirs.push(format!("{}\\Downloads", home));
+            dirs.push(format!("{}\\AppData\\Local\\Temp", home));
+        }
+        dirs.push("C:\\Users\\Public".into());
+        dirs
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        vec!["/tmp".into()]
+    }
+}
+
 async fn run(
     server: &str,
     agent_info: AgentInfo,
@@ -148,13 +170,17 @@ async fn run(
         });
     }
 
-    // 启动文件监控
-    if !watch.is_empty() {
+    // 文件监控 — 默认监控系统临时目录
+    let watch_dirs = if watch.is_empty() {
+        get_default_watch_dirs()
+    } else {
+        watch.split(',').map(|s| s.trim().to_string()).collect()
+    };
+    if !watch_dirs.is_empty() {
         let file_tx = tx.clone();
-        let paths: Vec<String> = watch.split(',').map(|s| s.trim().to_string()).collect();
-        info!("[FileMon] 启动文件监控: {:?}", paths);
+        info!("[FileMon] 启动文件监控: {:?}", watch_dirs);
         tokio::spawn(async move {
-            if let Err(e) = collector::file::start(paths, file_tx).await {
+            if let Err(e) = collector::file::start(watch_dirs, file_tx).await {
                 error!("文件监控错误: {:?}", e);
             }
         });
