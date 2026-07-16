@@ -7,31 +7,31 @@
 ```
 ┌─────────────────────┐      gRPC 双向流       ┌──────────────────────┐
 │  Rust Agent         │◄──────────────────────►│  Go Server           │
-│  ├─ ETW (Windows)   │     实时事件上报        │  ├─ gRPC Handler     │
-│  ├─ auditd (Linux)  │       ╱───────╮        │  ├─ 检测引擎         │
-│  ├─ YARA 扫描       │      ╱         ╲       │  │  ├─ Sigma 规则    │
-│  └─ 远控指令执行    │     ╱           ╲      │  │  ├─ IOC 匹配      │
-└─────────────────────┘    ╱             ╲     │  ├─ 响应模块         │
-                           ╲             ╱     │  │  ├─ 隔离/杀进程   │
-                            ╲           ╱      │  │  └─ 远程脚本      │
-                             ╲         ╱       │  └─ HTTP API         │
-                              ╲───────╮        └────────┬─────────────┘
-                                       ╲                 │
-                                        ╲                │
-                              ┌──────────────────────────▼────┐
-                              │  Elasticsearch               │
-                              │  ├─ 遥测索引 (baize-events-*) │
-                              │  ├─ 告警索引 (baize-alerts-*) │
-                              │  └─ 主机状态 (baize-hosts-*)  │
-                              └───────────────────────────────┘
-                                          │
-                              ┌───────────▼───────────┐
-                              │  React Dashboard      │
-                              │  ├─ 主机列表/状态     │
-                              │  ├─ 告警详情          │
-                              │  ├─ 事件时间线/溯源图  │
-                              │  └─ 规则管理/狩猎查询  │
-                              └───────────────────────┘
+│  ├─ EvtSubscribe    │     实时事件上报        │  ├─ gRPC Handler     │
+│  │  (Windows 4688)  │       ╱───────╮        │  ├─ 检测引擎         │
+│  ├─ auditd (Linux)  │      ╱         ╲       │  │  ├─ Sigma 规则    │
+│  ├─ 文件监控        │     ╱           ╲      │  │  ├─ IOC 匹配      │
+│  └─ 远控指令执行    │    ╱             ╲     │  ├─ 响应模块         │
+└─────────────────────┘    ╲             ╱     │  │  ├─ 隔离/杀进程   │
+                           ╲           ╱      │  │  └─ 远程脚本      │
+                            ╲         ╱       │  └─ HTTP API         │
+                             ╲───────╮        └────────┬─────────────┘
+                                      ╲                 │
+                                       ╲                │
+                             ┌──────────────────────────▼────┐
+                             │  Bleve 内嵌索引               │
+                             │  ├─ 事件存储                  │
+                             │  ├─ 告警存储                  │
+                             │  └─ 主机聚合                  │
+                             └───────────────────────────────┘
+                                         │
+                             ┌───────────▼───────────┐
+                             │  React Dashboard      │
+                             │  ├─ 主机列表 (在线/离线)│
+                             │  ├─ 告警详情          │
+                             │  ├─ 事件时间线         │
+                             │  └─ 主机详情          │
+                             └───────────────────────┘
 ```
 
 ## 技术栈
@@ -64,24 +64,31 @@ Baize/
 
 ### 1. 启动 Server
 ```bash
-cd D:\files\projects\Baize
-go run ./server/cmd/
+cd server
+run.bat              # 自动编译前端 + 启动 Server（推荐）
+# 或分开执行:
+# cd web && npm run build && cd .. && go run ./cmd/
 ```
 
-### 2. 启动 Agent
+Server 启动后:
+- gRPC 端口: `50051`
+- Dashboard + API: `http://localhost:8080`
+
+### 2. 启动 Agent（Windows，需管理员权限）
+```cmd
+REM 先启用进程创建审计（只需执行一次）
+auditpol /set /subcategory:{0CCE922B-69AE-11D9-BED3-505054503030} /success:enable
+
+REM 启动 Agent
+cd D:\files\projects\Baize\agent\target\debug
+baize-agent.exe
+```
+
+### 3. 编译 Agent（改代码后）
 ```bash
-# 新开一个终端
-cd D:\files\projects\Baize\agent
-cargo run
+cd agent
+cargo build
 ```
-
-Agent 默认连接 `127.0.0.1:50051`，Server 不在本机时用 `--server` 指定：
-```bash
-cargo run -- --server http://192.168.x.x:50051
-```
-
-### 3. 打开 Dashboard
-浏览器访问 http://localhost:8080
 
 ### 4. 编译 Protobuf（改了 proto 文件后需要重新生成）
 ```bash
@@ -90,17 +97,21 @@ protoc --proto_path=. \
   --go_out=gen/go --go_opt=paths=source_relative \
   --go-grpc_out=gen/go --go-grpc_opt=paths=source_relative \
   baize/v1/baize.proto
+cd agent && cargo build  # Agent 侧自动重新生成
 ```
 
 ## 当前状态
 
-Phase 1 已完成:
+Phase 1 & 2 已完成:
 - [x] 架构设计（文档 + 架构图）
 - [x] Protobuf 协议定义（18 种事件 + 4 种指令 + gRPC 服务）
-- [x] Go Server 骨架（gRPC 服务端，双向流实现）
-- [x] 模拟 Agent 端到端测试通过
-- [ ] Rust Agent（待开发）
-- [ ] 检测引擎 + Storage + Dashboard（待开发）
+- [x] Go Server（gRPC + Bleve 内嵌存储 + HTTP API）
+- [x] Rust Agent（EvtSubscribe 实时进程采集 + 文件监控 + 指令响应）
+- [x] React Dashboard（主机列表/在线状态 + 事件时间线 + 告警）
+- [ ] ETW 进程监控（待后续研究）
+- [ ] 注册表/计划任务采集
+- [ ] YARA 扫描
+- [ ] 溯源图
 
 ## 协议
 

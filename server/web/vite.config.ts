@@ -9,7 +9,7 @@ export default defineConfig({
     }
   },
   build: {
-    outDir: '../../cmd/web',
+    outDir: '../cmd/web',
     sourcemap: false
   }
 })
