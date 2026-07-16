@@ -271,7 +271,7 @@ func main() {
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 		<-sig
 		log.Println("收到退出信号，正在关闭...")
-		s.GracefulStop()
+		s.Stop()
 	}()
 
 	log.Printf("═══════════════════════════════════════════")
