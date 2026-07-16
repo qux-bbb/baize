@@ -64,16 +64,26 @@ Baize/
 
 ### 1. 启动 Server
 ```bash
-cd server && go run ./cmd/
+cd D:\files\projects\Baize
+go run ./server/cmd/
 ```
 
-### 2. 运行模拟 Agent 测试通信
+### 2. 启动 Agent
 ```bash
-# 新开一个终端，运行测试 Agent
-cd tools && go run ./mock-agent/
+# 新开一个终端
+cd D:\files\projects\Baize\agent
+cargo run
 ```
 
-### 3. 编译 Protobuf（改了 proto 文件后需要重新生成）
+Agent 默认连接 `127.0.0.1:50051`，Server 不在本机时用 `--server` 指定：
+```bash
+cargo run -- --server http://192.168.x.x:50051
+```
+
+### 3. 打开 Dashboard
+浏览器访问 http://localhost:8080
+
+### 4. 编译 Protobuf（改了 proto 文件后需要重新生成）
 ```bash
 cd proto
 protoc --proto_path=. \
