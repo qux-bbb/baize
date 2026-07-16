@@ -128,18 +128,12 @@ async fn run(
 
     let (tx, mut rx) = mpsc::channel::<Event>(1024);
 
-    // 启动进程采集器
-    let collect_tx = tx.clone();
-    let collect_sys = Arc::clone(system);
+    // 启动进程快照（不产生事件，事件由 EventLog 4688 实时采集）
+    let _tx = tx.clone();
+    let _sys = Arc::clone(system);
     tokio::spawn(async move {
-        if let Err(e) = collector::process::start(
-            collect_sys,
-            collect_tx,
-            Duration::from_secs(interval_secs),
-        )
-        .await
-        {
-            error!("进程采集器错误: {:?}", e);
+        if let Err(e) = collector::process::start(_sys, _tx).await {
+            error!("进程快照错误: {:?}", e);
         }
     });
 
@@ -150,6 +144,17 @@ async fn run(
         tokio::spawn(async move {
             if let Err(e) = collector::windows::start(el_tx).await {
                 error!("EventLog 采集器错误: {:?}", e);
+            }
+        });
+    }
+
+    // Windows WMI 实时进程监控（无需管理员权限，在独立线程运行）
+    #[cfg(target_os = "windows")]
+    {
+        let wmi_tx = tx.clone();
+        std::thread::spawn(move || {
+            if let Err(e) = collector::wmi_process::start_etw(wmi_tx) {
+                tracing::error!("ETW 进程监控错误: {:?}", e);
             }
         });
     }
@@ -183,13 +188,22 @@ async fn run(
     });
 
     let streaming_request = tokio_stream::wrappers::ReceiverStream::new(request_rx);
+
+    // 在建立 gRPC 流之前先放入上线事件，避免死锁
+    let _ = tx.send(pb::Event {
+        agent_info: None,
+        sequence_id: 0,
+        event_type: Some(pb::event::EventType::ProcessCreate(pb::ProcessCreateEvent::default())),
+    }).await;
+
     let response = client
         .agent_stream(Request::new(streaming_request))
         .await
         .context("AgentStream RPC 失败")?;
 
-    let mut incoming = response.into_inner();
     info!("双向流已建立，等待 Server 指令...");
+
+    let mut incoming = response.into_inner();
 
     while let Some(cmd) = incoming.message().await? {
         info!("收到指令: {:?}", cmd);
