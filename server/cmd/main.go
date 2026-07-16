@@ -190,23 +190,21 @@ func initEngine(esStore *store.Store) *engine.Engine {
 
 func main() {
 	port := flag.Int("port", 50051, "gRPC 端口")
-	esAddr := flag.String("es", "http://192.168.116.131:9200", "Elasticsearch 地址")
-	esUser := flag.String("es-user", "elastic", "ES 用户名")
-	esPass := flag.String("es-pass", "elastic123", "ES 密码")
 	flag.Parse()
 
-	// 初始化 ES
-	log.Printf("[ES] 连接 %s ...", *esAddr)
-	esStore, err := store.New(*esAddr, *esUser, *esPass)
+	// 初始化 Bleve 存储
+	log.Printf("[Store] 初始化 Bleve 索引...")
+	storePath := filepath.Join(".", "data", "baize.bleve")
+	bleveStore, err := store.New(storePath)
 	if err != nil {
-		log.Printf("[ES] 初始化失败（ES 不可用不影响 Server 启动）: %v", err)
+		log.Printf("[Store] 初始化失败: %v（不影响 Server 启动）", err)
 	} else {
-		log.Printf("[ES] 连接成功")
-		defer esStore.Close()
+		log.Printf("[Store] Bleve 索引就绪: %s", storePath)
+		defer bleveStore.Close()
 	}
 
 	// 初始化检测引擎
-	eng := initEngine(esStore)
+	eng := initEngine(bleveStore)
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
 	if err != nil {
@@ -215,16 +213,16 @@ func main() {
 
 	s := grpc.NewServer()
 	cmdBus := engine.NewCommandBus()
-	pb.RegisterBaizeServiceServer(s, &baizeServer{es: esStore, engine: eng, cmdBus: cmdBus})
+	pb.RegisterBaizeServiceServer(s, &baizeServer{es: bleveStore, engine: eng, cmdBus: cmdBus})
 
 	// 启动 HTTP API + Dashboard Server
 	{
 		mux := http.NewServeMux()
-		if esStore != nil {
-			apiHandler := api.New(esStore.ESClient())
+		if bleveStore != nil {
+			apiHandler := api.New(bleveStore)
 			mux.HandleFunc("GET /api/hosts", apiHandler.Hosts)
 			mux.HandleFunc("GET /api/alerts", apiHandler.Alerts)
-		mux.HandleFunc("GET /api/alert", apiHandler.AlertDetail)
+			mux.HandleFunc("GET /api/alert", apiHandler.AlertDetail)
 			mux.HandleFunc("GET /api/events", apiHandler.Events)
 		}
 		mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
@@ -274,7 +272,7 @@ func main() {
 	log.Printf("═══════════════════════════════════════════")
 	log.Printf("  Baize (白泽) EDR Server")
 	log.Printf("  gRPC 端口: %d", *port)
-	log.Printf("  ES 地址:   %s", *esAddr)
+	log.Printf("  存储: %s", storePath)
 	log.Printf("  检测引擎:  %d 条规则已加载", eng.RuleCount())
 	log.Printf("  等待 Agent 连接...")
 	log.Printf("═══════════════════════════════════════════")
