@@ -179,10 +179,38 @@ unsafe extern "system" fn subscribe_callback(
     0 // 继续订阅
 }
 
+/// 自动启用进程创建 (4688) 和网络连接 (5156) 审计策略
+fn enable_audit_policies() {
+    let process_guid = "{0CCE922B-69AE-11D9-BED3-505054503030}";
+    let network_guid = "{0CCE9226-69AE-11D9-BED3-505054503030}";
+
+    for guid in [process_guid, network_guid] {
+        let output = std::process::Command::new("auditpol")
+            .args(["/set", &format!("/subcategory:{}", guid), "/success:enable"])
+            .output();
+        match output {
+            Ok(out) if out.status.success() => {
+                tracing::info!("[审计] 已启用: {}", guid);
+            }
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                tracing::warn!("[审计] 启用失败 {}: {}", guid, stderr.trim());
+            }
+            Err(e) => {
+                tracing::warn!("[审计] auditpol 执行失败: {}", e);
+            }
+        }
+    }
+}
+
 pub fn start_evtsub(tx: mpsc::Sender<pb::Event>) -> Result<()> {
     EVTSUB_TX
         .set(tx)
         .map_err(|_| anyhow::anyhow!("EvtSubscribe 已初始化"))?;
+
+    // 自动启用 Windows 审计策略（进程创建 4688 + 网络连接 5156）
+    enable_audit_policies();
+
     info!("[EventLog] EvtSubscribe 启动: Security 通道 4688...");
 
     unsafe {
