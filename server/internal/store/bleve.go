@@ -260,7 +260,7 @@ func (s *Store) SearchEvents(hostname string, size int) ([]EventResult, error) {
 	search := bleve.NewSearchRequest(q)
 	search.Size = size
 	search.SortBy([]string{"-@timestamp"})
-	search.Fields = []string{"@timestamp", "event_type", "event_action", "pid", "hostname", "image_path", "file_path", "remote_ip", "remote_port", "registry_key", "task_name", "rule_name", "target_path", "command_line"}
+	search.Fields = []string{"@timestamp", "event_type", "event_action", "pid", "hostname", "image_path", "file_path", "remote_ip", "remote_port", "registry_key", "task_name", "rule_name", "target_path", "command_line", "process_name"}
 
 	result, err := s.index.Search(search)
 	if err != nil {
@@ -356,7 +356,7 @@ func eventToDoc(event *pb.Event) EventDoc {
 		doc.Protocol = e.NetworkConnection.GetProtocol()
 		doc.Direction = e.NetworkConnection.GetDirection()
 		doc.PID = e.NetworkConnection.GetPid()
-		doc.ProcessName = e.NetworkConnection.GetProcessName()
+		doc.ProcessName = extractName(e.NetworkConnection.GetProcessName())
 
 	case *pb.Event_RegistryChange:
 		doc.Category = "registry"
@@ -522,6 +522,13 @@ func buildSummary(fields map[string]interface{}) string {
 	}
 	if rip := getFieldStr(fields, "remote_ip"); rip != "" {
 		port := getFieldUint(fields, "remote_port")
+		proc := getFieldStr(fields, "process_name")
+		pid := getFieldUint(fields, "pid")
+		if proc != "" && pid > 0 {
+			return fmt.Sprintf("%s (PID %d) → %s:%d", proc, pid, rip, port)
+		} else if proc != "" {
+			return fmt.Sprintf("%s → %s:%d", proc, rip, port)
+		}
 		return fmt.Sprintf("%s:%d", rip, port)
 	}
 	if rk := getFieldStr(fields, "registry_key"); rk != "" {

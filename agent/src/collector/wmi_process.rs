@@ -122,36 +122,59 @@ unsafe extern "system" fn subscribe_callback(
 
     if !xml.contains("EventID>4688") {
         let has_eventid = xml.contains("EventID");
-        tracing::info!("[EventLog] 不是 4688 事件 (has EventID={}), 跳过", has_eventid);
-        return 0;
-    }
+        if !xml.contains("EventID>4688") && !xml.contains("EventID>5156") {
+            return 0;
+        }
 
-    let pid = extract_pid(&xml, "NewProcessId");
-    let parent_pid = extract_pid(&xml, "ProcessId");
-    let image_path = extract_xml(&xml, "Data", Some("NewProcessName"));
-    let command_line = extract_xml(&xml, "Data", Some("CommandLine"));
+        if xml.contains("EventID>4688") {
+            // 进程创建事件
+            let pid = extract_pid(&xml, "NewProcessId");
+            let parent_pid = extract_pid(&xml, "ProcessId");
+            let image_path = extract_xml(&xml, "Data", Some("NewProcessName"));
+            let command_line = extract_xml(&xml, "Data", Some("CommandLine"));
 
-    if pid == 0 || image_path.is_empty() {
-        return 0;
-    }
+            if pid == 0 || image_path.is_empty() {
+                return 0;
+            }
 
-    let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
-    if let Some(tx) = EVTSUB_TX.get() {
-        let _ = tx.blocking_send(pb::Event {
-            agent_info: None,
-            sequence_id: 0,
-            event_type: Some(pb::event::EventType::ProcessCreate(pb::ProcessCreateEvent {
-                pid,
-                parent_pid,
-                command_line,
-                image_path,
-                hash_sha256: String::new(),
-                timestamp_ns: now,
-                user: String::new(),
-                session_id: 0,
-                is_elevated: false,
-            })),
-        });
+            let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
+            if let Some(tx) = EVTSUB_TX.get() {
+                let _ = tx.blocking_send(pb::Event {
+                    agent_info: None, sequence_id: 0,
+                    event_type: Some(pb::event::EventType::ProcessCreate(pb::ProcessCreateEvent {
+                        pid, parent_pid, command_line, image_path,
+                        hash_sha256: String::new(), timestamp_ns: now,
+                        user: String::new(), session_id: 0, is_elevated: false,
+                    })),
+                });
+            }
+        } else if xml.contains("EventID>5156") {
+            // 网络连接事件
+            let pid = extract_pid(&xml, "ProcessID");
+            let process_name = extract_xml(&xml, "Data", Some("Application"));
+            let local_ip = extract_xml(&xml, "Data", Some("SourceAddress"));
+            let local_port_str = extract_xml(&xml, "Data", Some("SourcePort"));
+            let remote_ip = extract_xml(&xml, "Data", Some("DestAddress"));
+            let remote_port_str = extract_xml(&xml, "Data", Some("DestPort"));
+            let protocol_str = extract_xml(&xml, "Data", Some("Protocol"));
+            let direction_str = extract_xml(&xml, "Data", Some("Direction"));
+
+            let local_port = local_port_str.parse::<u32>().unwrap_or(0);
+            let remote_port = remote_port_str.parse::<u32>().unwrap_or(0);
+            let protocol = if protocol_str == "6" { "tcp" } else if protocol_str == "17" { "udp" } else { "other" };
+            let direction = if direction_str.contains("14593") { "outbound" } else { "inbound" };
+
+            let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
+            if let Some(tx) = EVTSUB_TX.get() {
+                let _ = tx.blocking_send(pb::Event {
+                    agent_info: None, sequence_id: 0,
+                    event_type: Some(pb::event::EventType::NetworkConnection(pb::NetworkConnectionEvent {
+                        pid, process_name, local_ip, local_port, remote_ip, remote_port,
+                        protocol: protocol.to_string(), direction: direction.to_string(), timestamp_ns: now,
+                    })),
+                });
+            }
+        }
     }
     0 // 继续订阅
 }
@@ -164,7 +187,7 @@ pub fn start_evtsub(tx: mpsc::Sender<pb::Event>) -> Result<()> {
 
     unsafe {
         let channel = windows::core::w!("Security");
-        let query = windows::core::w!("*[System[(EventID=4688)]]");
+        let query = windows::core::w!("*[System[(EventID=4688 or EventID=5156)]]");
 
         let handle = EvtSubscribe(
             EVT_HANDLE::default(),  // null session (local)
