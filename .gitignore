@@ -35,3 +35,4 @@ server/web/dist
 server/cmd/web
 
 tmp.txt
+data/
