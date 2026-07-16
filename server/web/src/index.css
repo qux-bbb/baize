@@ -67,6 +67,16 @@ h1 { font-family: var(--font); font-size: 1.25rem; font-weight: 700; }
 }
 .btn:hover { background: rgba(34, 211, 238, 0.2); }
 .clickable { cursor: pointer; }
+.back { cursor: pointer; color: var(--accent); margin-right: 0.3rem; font-size: 1.1rem; }
+.back:hover { opacity: 0.7; }
+
+/* Host detail page */
+.host-detail { padding: 0; }
+.detail-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+.detail-card { background: rgba(15,23,42,0.6); border: 1px solid #1e293b; border-radius: 8px; padding: 1rem; }
+.detail-label { font-size: 0.7rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem; }
+.detail-value { font-size: 0.9rem; color: #e2e8f0; }
+.detail-actions { display: flex; gap: 0.5rem; }
 
 /* Modal */
 .overlay {
