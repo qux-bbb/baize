@@ -73,6 +73,11 @@ type EventDoc struct {
 	TargetPath    string `json:"target_path,omitempty"`
 	MatchedString string `json:"matched_string,omitempty"`
 
+	// DNS
+	QueryName  string `json:"query_name,omitempty"`
+	QueryType  string `json:"query_type,omitempty"`
+	ResultIPs  string `json:"result_ips,omitempty"`
+
 	// 告警专用
 	AlertID      string   `json:"alert_id,omitempty"`
 	RuleID       string   `json:"rule_id,omitempty"`
@@ -260,7 +265,7 @@ func (s *Store) SearchEvents(hostname string, size int) ([]EventResult, error) {
 	search := bleve.NewSearchRequest(q)
 	search.Size = size
 	search.SortBy([]string{"-@timestamp"})
-	search.Fields = []string{"@timestamp", "event_type", "event_action", "pid", "hostname", "image_path", "file_path", "remote_ip", "remote_port", "registry_key", "task_name", "rule_name", "target_path", "command_line", "process_name"}
+	search.Fields = []string{"@timestamp", "event_type", "event_action", "pid", "hostname", "image_path", "file_path", "remote_ip", "remote_port", "registry_key", "task_name", "rule_name", "target_path", "command_line", "process_name", "query_name"}
 
 	result, err := s.index.Search(search)
 	if err != nil {
@@ -373,6 +378,15 @@ func eventToDoc(event *pb.Event) EventDoc {
 		doc.RuleName = e.YaraMatch.GetRuleName()
 		doc.TargetPath = e.YaraMatch.GetTargetPath()
 		doc.MatchedString = e.YaraMatch.GetMatchedString()
+
+	case *pb.Event_DnsQuery:
+		doc.Category = "network"
+		doc.EventAction = "query"
+		doc.PID = e.DnsQuery.GetPid()
+		doc.ProcessName = extractName(e.DnsQuery.GetProcessName())
+		doc.QueryName = e.DnsQuery.GetQueryName()
+		doc.QueryType = e.DnsQuery.GetQueryType()
+		doc.ResultIPs = e.DnsQuery.GetResultIps()
 	}
 
 	return doc
@@ -417,6 +431,8 @@ func getEventType(event *pb.Event) string {
 		return "scheduled_task"
 	case *pb.Event_YaraMatch:
 		return "yara_match"
+	case *pb.Event_DnsQuery:
+		return "dns_query"
 	}
 	return "unknown"
 }
@@ -539,6 +555,13 @@ func buildSummary(fields map[string]interface{}) string {
 	}
 	if rn := getFieldStr(fields, "rule_name"); rn != "" {
 		return fmt.Sprintf("%s → %s", rn, getFieldStr(fields, "target_path"))
+	}
+	if qn := getFieldStr(fields, "query_name"); qn != "" {
+		proc := getFieldStr(fields, "process_name")
+		if proc != "" {
+			return fmt.Sprintf("%s → %s", proc, qn)
+		}
+		return qn
 	}
 	if cl := getFieldStr(fields, "command_line"); cl != "" {
 		if len(cl) > 120 {

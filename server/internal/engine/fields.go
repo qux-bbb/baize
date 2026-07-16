@@ -83,6 +83,13 @@ func EventToFieldMap(event *pb.Event) map[string]string {
 		m["rule_id"] = e.YaraMatch.GetRuleId()
 		m["target_path"] = e.YaraMatch.GetTargetPath()
 		m["scan_type"] = e.YaraMatch.GetScanType()
+
+	case *pb.Event_DnsQuery:
+		m["query_name"] = e.DnsQuery.GetQueryName()
+		m["query_type"] = e.DnsQuery.GetQueryType()
+		m["result_ips"] = e.DnsQuery.GetResultIps()
+		m["pid"] = fmt.Sprintf("%d", e.DnsQuery.GetPid())
+		m["process_name"] = e.DnsQuery.GetProcessName()
 	}
 
 	return m
@@ -108,6 +115,8 @@ func getEVType(event *pb.Event) string {
 		return "scheduled_task"
 	case *pb.Event_YaraMatch:
 		return "yara_match"
+	case *pb.Event_DnsQuery:
+		return "dns_query"
 	}
 	return "unknown"
 }
@@ -126,6 +135,8 @@ func getEVCategory(event *pb.Event) string {
 		return "scheduled_task"
 	case *pb.Event_YaraMatch:
 		return "yara"
+	case *pb.Event_DnsQuery:
+		return "network"
 	}
 	return "unknown"
 }

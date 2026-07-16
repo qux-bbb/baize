@@ -181,6 +181,7 @@ unsafe extern "system" fn subscribe_callback(
 
 /// 自动启用进程创建 (4688) 和网络连接 (5156) 审计策略
 fn enable_audit_policies() {
+    // 启用审计策略
     let process_guid = "{0CCE922B-69AE-11D9-BED3-505054503030}";
     let network_guid = "{0CCE9226-69AE-11D9-BED3-505054503030}";
 
@@ -201,9 +202,108 @@ fn enable_audit_policies() {
             }
         }
     }
+
+    // 启用 DNS Client 日志
+    let dns_channel = "Microsoft-Windows-DNS-Client/Operational";
+    if let Ok(out) = std::process::Command::new("wevtutil")
+        .args(["sl", dns_channel, "/e:true"])
+        .output()
+    {
+        if out.status.success() {
+            tracing::info!("[DNS] 日志通道已启用");
+        } else {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            tracing::info!("[DNS] 日志通道可能已启用: {}", stderr.trim());
+        }
+    }
+}
+
+/// 订阅 DNS Client 日志（EventID 3008）
+fn start_dns_subscription(tx: mpsc::Sender<pb::Event>) -> Result<()> {
+    info!("[DNS] 订阅 Microsoft-Windows-DNS-Client/Operational...");
+
+    unsafe {
+        let channel = windows::core::w!("Microsoft-Windows-DNS-Client/Operational");
+        let query = windows::core::w!("*[System[(EventID=3008)]]");
+
+        let handle = EvtSubscribe(
+            EVT_HANDLE::default(),
+            HANDLE::default(),
+            PCWSTR::from_raw(channel.as_ptr()),
+            PCWSTR::from_raw(query.as_ptr()),
+            EVT_HANDLE::default(),
+            None::<*const core::ffi::c_void>,
+            Some(dns_callback),
+            EvtSubscribeToFutureEvents.0,
+        );
+
+        match handle {
+            Ok(h) => {
+                info!("[DNS] EvtSubscribe 成功");
+                loop { std::thread::sleep(Duration::from_secs(3600)); }
+            }
+            Err(e) => {
+                anyhow::bail!("DNS EvtSubscribe 失败: {:?}", e);
+            }
+        }
+    }
+}
+
+unsafe extern "system" fn dns_callback(
+    action: EVT_SUBSCRIBE_NOTIFY_ACTION,
+    _usercontext: *const core::ffi::c_void,
+    event: EVT_HANDLE,
+) -> u32 {
+    if action != EvtSubscribeActionDeliver {
+        return 0;
+    }
+
+    // 渲染 XML
+    let mut buf_used = 0u32;
+    let _ = EvtRender(EVT_HANDLE::default(), event, EvtRenderEventXml.0, 0,
+        None::<*mut core::ffi::c_void>, &mut buf_used, std::ptr::null_mut());
+    if buf_used == 0 { return 0; }
+
+    let mut xml_buf = vec![0u16; buf_used as usize];
+    let mut buf_used2 = 0u32;
+    if EvtRender(EVT_HANDLE::default(), event, EvtRenderEventXml.0,
+        (buf_used * 2) as u32, Some(xml_buf.as_mut_ptr() as *mut core::ffi::c_void),
+        &mut buf_used2, std::ptr::null_mut()).is_err() { return 0; }
+
+    let xml = OsString::from_wide(&xml_buf).to_string_lossy().to_string();
+    if !xml.contains("EventID>3008") { return 0; }
+
+    let pid = extract_pid(&xml, "ProcessId");
+    let process_name = extract_xml(&xml, "Data", Some("ProcessName"));
+    let query_name = extract_xml(&xml, "Data", Some("QueryName"));
+    let query_type_str = extract_xml(&xml, "Data", Some("QueryType"));
+    let result_ips = extract_xml(&xml, "Data", Some("QueryResults"));
+
+    let qtype = match query_type_str.as_str() {
+        "1" => "A",
+        "28" => "AAAA",
+        "5" => "CNAME",
+        "15" => "MX",
+        _ => &query_type_str,
+    };
+
+    let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
+    if let Some(tx) = EVTSUB_TX.get() {
+        let _ = tx.blocking_send(pb::Event {
+            agent_info: None, sequence_id: 0,
+            event_type: Some(pb::event::EventType::DnsQuery(pb::DnsQueryEvent {
+                pid, process_name, query_name,
+                query_type: qtype.to_string(), result_ips, timestamp_ns: now,
+            })),
+        });
+    }
+    0
 }
 
 pub fn start_evtsub(tx: mpsc::Sender<pb::Event>) -> Result<()> {
+    // DNS 订阅需要独立的 tx（在 tx 被 EVTSUB_TX 消费前 clone）
+    let dns_tx = tx.clone();
+
     EVTSUB_TX
         .set(tx)
         .map_err(|_| anyhow::anyhow!("EvtSubscribe 已初始化"))?;
@@ -212,6 +312,13 @@ pub fn start_evtsub(tx: mpsc::Sender<pb::Event>) -> Result<()> {
     enable_audit_policies();
 
     info!("[EventLog] EvtSubscribe 启动: Security 通道 4688...");
+
+    // 启动 DNS 订阅（独立线程）
+    std::thread::spawn(move || {
+        if let Err(e) = start_dns_subscription(dns_tx) {
+            tracing::warn!("[DNS] 订阅失败 (日志可能未启用): {:?}", e);
+        }
+    });
 
     unsafe {
         let channel = windows::core::w!("Security");

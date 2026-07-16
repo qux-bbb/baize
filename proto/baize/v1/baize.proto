@@ -130,6 +130,16 @@ message YaraMatchEvent {
   uint64 timestamp_ns = 7;
 }
 
+// DNS 查询事件
+message DnsQueryEvent {
+  uint64 pid = 1;
+  string process_name = 2;
+  string query_name = 3;
+  string query_type = 4;
+  string result_ips = 5;
+  uint64 timestamp_ns = 6;
+}
+
 // ---------------------------------------------------------------------------
 // 3. 事件包装器 (Agent → Server 的上报单元)
 // ---------------------------------------------------------------------------
@@ -148,6 +158,7 @@ message Event {
     RegistryChangeEvent registry_change = 16;
     ScheduledTaskEvent scheduled_task = 17;
     YaraMatchEvent yara_match = 18;
+    DnsQueryEvent dns_query = 19;
   }
 }
 

@@ -138,6 +138,9 @@ func printEvent(event *pb.Event, agentID, hostname string, seq uint64) {
 	case *pb.Event_YaraMatch:
 		log.Printf("[Event] Agent=%s (%s) seq=%d | YARA 命中 规则=%s 目标=%s",
 			agentID, hostname, seq, e.YaraMatch.GetRuleName(), e.YaraMatch.GetTargetPath())
+	case *pb.Event_DnsQuery:
+		log.Printf("[Event] Agent=%s (%s) seq=%d | DNS 查询 %s → %s",
+			agentID, hostname, seq, e.DnsQuery.GetProcessName(), e.DnsQuery.GetQueryName())
 	default:
 		log.Printf("[Event] Agent=%s (%s) seq=%d | 未知事件", agentID, hostname, seq)
 	}
