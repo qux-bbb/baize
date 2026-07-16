@@ -1,92 +1,194 @@
-// ETW 实时进程监控 — Microsoft-Windows-Kernel-Process Provider
+// EvtSubscribe 实时进程监控 — Subscribe Security 日志 4688 事件
+// ──────────────────────────────────────────────────────────────────
+// 使用 Windows EvtSubscribe API 实时订阅 Security 通道的进程创建事件
+// (EventID 4688)，纯 API 调用，无需外部进程，管理员权限下实时推送。
+//
+// 未来 ETW 研究参考:
+// ──────────────────────────────────────────────────────────────────
+// ETW 能收更多事件类型 (DLL加载、注册表、线程等)，但需要 SYSTEM 权限
+// 和 EnableTraceEx2 API。当前 EvtSubscribe 只收 4688 已经够用。
+// 如果以后要扩展 ETW，请参考:
+//   - Provider: Microsoft-Windows-Kernel-Process (22FB2CD6-...)
+//   - 用 EnableTraceEx2 在私有会话上启用提供者
+//   - 需要 SE_SYSTEM_PROFILE_NAME 特权
+
 use anyhow::{Context, Result};
-use std::mem::size_of;
+use std::ffi::OsString;
+use std::os::windows::ffi::OsStringExt;
 use std::sync::OnceLock;
+use std::time::Duration;
 use tokio::sync::mpsc;
-use tracing::info;
-use windows::core::GUID;
+use tracing::{error, info};
+use windows::core::PCWSTR;
 use windows::Win32::Foundation::*;
-use windows::Win32::System::Diagnostics::Etw::*;
+use windows::Win32::System::EventLog::*;
 
 use crate::pb;
 
-const KERNEL_PROVIDER: GUID = GUID::from_u128(0x22FB2CD60E7B422BA0C72FAD1FD0E716);
-static ETW_TX: OnceLock<mpsc::Sender<pb::Event>> = OnceLock::new();
+static EVTSUB_TX: OnceLock<mpsc::Sender<pb::Event>> = OnceLock::new();
 
-unsafe extern "system" fn event_callback(rec: *mut EVENT_RECORD) {
-    if rec.is_null() { return; }
-    let r = &*rec;
-    if r.EventHeader.ProviderId != KERNEL_PROVIDER { return; }
-    if r.EventHeader.EventDescriptor.Id != 1 { return; } // ProcessStart
+/// 从 XML 片段中提取标签内的文本
+fn extract_xml(xml: &str, _tag: &str, attr: Option<&str>) -> String {
+    let open = if let Some(attr_val) = attr {
+        // 兼容单引号和双引号
+        format!("<Data Name='{}'>", attr_val)
+    } else {
+        format!("<{}>", _tag)
+    };
+    // 也尝试双引号版本
+    let open2 = if let Some(attr_val) = attr {
+        format!("<Data Name=\"{}\">", attr_val)
+    } else {
+        String::new()
+    };
+    let close = if attr.is_some() {
+        "</Data>"
+    } else {
+        "</"
+    };
 
-    let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
-    if let Some(tx) = ETW_TX.get() {
-        let _ = tx.blocking_send(pb::Event {
-            agent_info: None, sequence_id: 0,
-            event_type: Some(pb::event::EventType::ProcessCreate(pb::ProcessCreateEvent {
-                pid: r.EventHeader.ProcessId as u64, parent_pid: 0,
-                command_line: String::new(), image_path: String::new(),
-                hash_sha256: String::new(), timestamp_ns: now,
-                user: String::new(), session_id: 0, is_elevated: false,
-            })),
-        });
+    for open_str in [open, open2].iter().filter(|s| !s.is_empty()) {
+        if let Some(start) = xml.find(open_str.as_str()) {
+            let content_start = start + open_str.len();
+            if let Some(end) = xml[content_start..].find(close) {
+                return xml[content_start..content_start + end].to_string();
+            }
+        }
+    }
+    String::new()
+}
+
+/// 从 XML 中提取十六进制 PID 并转为十进制
+fn extract_pid(xml: &str, attr: &str) -> u64 {
+    let hex = extract_xml(xml, "Data", Some(attr));
+    if hex.starts_with("0x") || hex.starts_with("0X") {
+        u64::from_str_radix(&hex[2..], 16).unwrap_or(0)
+    } else {
+        hex.parse::<u64>().unwrap_or(0)
     }
 }
 
-pub fn start_etw(tx: mpsc::Sender<pb::Event>) -> Result<()> {
-    ETW_TX.set(tx).map_err(|_| anyhow::anyhow!("ETW 已初始化"))?;
-    info!("[ETW] 启动内核进程跟踪...");
+unsafe extern "system" fn subscribe_callback(
+    action: EVT_SUBSCRIBE_NOTIFY_ACTION,
+    _usercontext: *const core::ffi::c_void,
+    event: EVT_HANDLE,
+) -> u32 {
+    static CALLBACK_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = CALLBACK_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    tracing::info!("[EventLog] 回调触发 #{}: action={:?}", n, action);
 
-    unsafe {
-        let name = windows::core::w!("NT Kernel Logger");
-        let name_len = (std::mem::size_of_val(&[0u16; 18]) + 256) as u32; // ~34 + 256 padding
-
-        let total = size_of::<EVENT_TRACE_PROPERTIES>() + name_len as usize;
-        let mut buf = vec![0u8; total];
-        let props = buf.as_mut_ptr() as *mut EVENT_TRACE_PROPERTIES;
-
-        let mut p = EVENT_TRACE_PROPERTIES::default();
-        p.Wnode.BufferSize = total as u32;
-        p.Wnode.Flags = WNODE_FLAG_ALL_DATA;
-        p.BufferSize = 256;
-        p.MinimumBuffers = 1;
-        p.MaximumBuffers = 4;
-        p.LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
-        p.FlushTimer = 1;
-        p.EnableFlags = EVENT_TRACE_FLAG_PROCESS;
-        p.Anonymous = EVENT_TRACE_PROPERTIES_0 { AgeLimit: 0 };
-        p.LoggerNameOffset = size_of::<EVENT_TRACE_PROPERTIES>() as u32;
-        props.write(p);
-
-        let mut handle = CONTROLTRACE_HANDLE::default();
-        let status = StartTraceW(&mut handle, name, props);
-
-        if status != ERROR_SUCCESS && status != ERROR_ALREADY_EXISTS {
-            anyhow::bail!("StartTraceW 失败 (需要管理员权限): code={}", status.0);
-        }
-
-        if status == ERROR_SUCCESS {
-            info!("[ETW] 跟踪会话已启动");
-        } else {
-            info!("[ETW] 内核跟踪会话已存在，尝试附加...");
-        }
-
-        // 打开跟踪
-        let mut logfile: EVENT_TRACE_LOGFILEW = Default::default();
-        logfile.LoggerName = windows::core::PWSTR(name.as_ptr() as *mut u16);
-        logfile.Anonymous1.ProcessTraceMode = PROCESS_TRACE_MODE_REAL_TIME | PROCESS_TRACE_MODE_EVENT_RECORD;
-        logfile.Anonymous2.EventRecordCallback = Some(event_callback);
-        logfile.IsKernelTrace = 1;
-
-        let trace = OpenTraceW(&mut logfile);
-        if trace.Value == u64::MAX {
-            anyhow::bail!("OpenTraceW 失败");
-        }
-
-        info!("[ETW] 开始处理事件...");
-        let result = ProcessTrace(&[trace], None, None);
-        info!("[ETW] ProcessTrace 结束: {:?}", result);
+    if action != EvtSubscribeActionDeliver {
+        return 0;
     }
 
-    Ok(())
+    // 第一次渲染：获取缓冲区大小
+    let mut buf_used = 0u32;
+    let r1 = EvtRender(
+        EVT_HANDLE::default(),
+        event,
+        EvtRenderEventXml.0,
+        0,
+        None::<*mut core::ffi::c_void>,
+        &mut buf_used,
+        std::ptr::null_mut(),
+    );
+    if buf_used == 0 {
+        tracing::warn!("[EventLog] EvtRender 返回空: {:?}", r1);
+        return 0;
+    }
+    tracing::info!("[EventLog] EvtRender 大小: {} bytes", buf_used);
+
+
+    // 第二次渲染：获取 XML
+    let mut xml_buf = vec![0u16; buf_used as usize];
+    let mut buf_used2 = 0u32;
+    let render_result = EvtRender(
+        EVT_HANDLE::default(),
+        event,
+        EvtRenderEventXml.0,
+        (buf_used * 2) as u32,
+        Some(xml_buf.as_mut_ptr() as *mut core::ffi::c_void),
+        &mut buf_used2,
+        std::ptr::null_mut(),
+    );
+    if render_result.is_err() {
+        tracing::warn!("[EventLog] 二次渲染失败: {:?}", render_result);
+        return 0;
+    }
+
+    let xml = OsString::from_wide(&xml_buf).to_string_lossy().to_string();
+    let xml_preview: String = xml.chars().take(200).collect();
+    tracing::info!("[EventLog] XML 预览: {}", xml_preview);
+
+    if !xml.contains("EventID>4688") {
+        let has_eventid = xml.contains("EventID");
+        tracing::info!("[EventLog] 不是 4688 事件 (has EventID={}), 跳过", has_eventid);
+        return 0;
+    }
+
+    let pid = extract_pid(&xml, "NewProcessId");
+    let parent_pid = extract_pid(&xml, "ProcessId");
+    let image_path = extract_xml(&xml, "Data", Some("NewProcessName"));
+    let command_line = extract_xml(&xml, "Data", Some("CommandLine"));
+
+    if pid == 0 || image_path.is_empty() {
+        return 0;
+    }
+
+    let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
+    if let Some(tx) = EVTSUB_TX.get() {
+        let _ = tx.blocking_send(pb::Event {
+            agent_info: None,
+            sequence_id: 0,
+            event_type: Some(pb::event::EventType::ProcessCreate(pb::ProcessCreateEvent {
+                pid,
+                parent_pid,
+                command_line,
+                image_path,
+                hash_sha256: String::new(),
+                timestamp_ns: now,
+                user: String::new(),
+                session_id: 0,
+                is_elevated: false,
+            })),
+        });
+    }
+    0 // 继续订阅
+}
+
+pub fn start_evtsub(tx: mpsc::Sender<pb::Event>) -> Result<()> {
+    EVTSUB_TX
+        .set(tx)
+        .map_err(|_| anyhow::anyhow!("EvtSubscribe 已初始化"))?;
+    info!("[EventLog] EvtSubscribe 启动: Security 通道 4688...");
+
+    unsafe {
+        let channel = windows::core::w!("Security");
+        let query = windows::core::w!("*[System[(EventID=4688)]]");
+
+        let handle = EvtSubscribe(
+            EVT_HANDLE::default(),  // null session (local)
+            HANDLE::default(),      // no signal event (blocking callback)
+            PCWSTR::from_raw(channel.as_ptr()),
+            PCWSTR::from_raw(query.as_ptr()),
+            EVT_HANDLE::default(),  // no bookmark
+            None::<*const core::ffi::c_void>,
+            Some(subscribe_callback),
+            EvtSubscribeToFutureEvents.0,
+        );
+
+        match handle {
+            Ok(h) => {
+                info!("[EventLog] EvtSubscribe 成功");
+                // 阻塞，让回调处理事件
+                loop {
+                    std::thread::sleep(Duration::from_secs(3600));
+                    // 检查连接：每5分钟ping一次回调是否活跃
+                }
+            }
+            Err(e) => {
+                anyhow::bail!("EvtSubscribe 失败 (需要管理员权限): {:?}", e);
+            }
+        }
+    }
 }

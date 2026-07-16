@@ -153,8 +153,8 @@ async fn run(
     {
         let wmi_tx = tx.clone();
         std::thread::spawn(move || {
-            if let Err(e) = collector::wmi_process::start_etw(wmi_tx) {
-                tracing::error!("ETW 进程监控错误: {:?}", e);
+            if let Err(e) = collector::wmi_process::start_evtsub(wmi_tx) {
+                tracing::error!("EventLog 监控错误: {:?}", e);
             }
         });
     }
