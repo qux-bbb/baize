@@ -280,6 +280,7 @@ func (s *Store) SearchEvents(hostname string, size int) ([]EventResult, error) {
 			Hostname:  getFieldStr(hit.Fields, "hostname"),
 			Summary:   buildSummary(hit.Fields),
 			PID:       getFieldUint(hit.Fields, "pid"),
+			Raw:       hit.Fields,
 		})
 	}
 	return events, nil
@@ -488,11 +489,12 @@ type AlertResult struct {
 }
 
 type EventResult struct {
-	Timestamp string `json:"@timestamp"`
-	EventType string `json:"event_type"`
-	Hostname  string `json:"hostname"`
-	Summary   string `json:"summary"`
-	PID       uint64 `json:"pid,omitempty"`
+	Timestamp string                 `json:"@timestamp"`
+	EventType string                 `json:"event_type"`
+	Hostname  string                 `json:"hostname"`
+	Summary   string                 `json:"summary"`
+	PID       uint64                 `json:"pid,omitempty"`
+	Raw       map[string]interface{} `json:"raw,omitempty"`
 }
 
 func getFieldStr(fields map[string]interface{}, key string) string {

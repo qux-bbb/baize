@@ -66,6 +66,7 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
   const [detail, setDetail] = useState<AlertDetail | null>(null)
+  const [eventDetail, setEventDetail] = useState<any | null>(null)
 
   useEffect(() => {
     const onHash = () => setRoute(parseHash())
@@ -219,7 +220,7 @@ export default function App() {
               <thead><tr><th>时间</th><th>主机</th><th>类型</th><th>摘要</th></tr></thead>
               <tbody>
                 {events.map((e, i) => (
-                  <tr key={i}>
+                  <tr key={i} className="clickable" onClick={() => setEventDetail(e)}>
                     <td className="ago">{timeAgo(e['@timestamp'])}</td>
                     <td>{e.hostname}</td>
                     <td className="mono">{e.event_type}{e.event_action ? '/' + e.event_action : ''}</td>
@@ -262,6 +263,28 @@ export default function App() {
                   </table>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {eventDetail && (
+        <div className="overlay" onClick={() => setEventDetail(null)}>
+          <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <strong>{eventDetail.event_type}{eventDetail.event_action ? '/' + eventDetail.event_action : ''}</strong>
+              <span className="ago" style={{marginLeft:'0.6rem'}}>{eventDetail['@timestamp']}</span>
+              <button className="close" onClick={() => setEventDetail(null)}>×</button>
+            </div>
+            <div className="modal-body">
+              <table className="kv-table">
+                <tbody>
+                  {eventDetail.raw && Object.entries(eventDetail.raw).filter(([k]) => !k.startsWith('_')).sort().map(([k, v]) => (
+                    <tr key={k}><td className="mono">{k}</td><td className="mono">{String(v)}</td></tr>
+                  ))}
+                  {!eventDetail.raw && <tr><td colSpan={2} className="empty">无详细数据</td></tr>}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>

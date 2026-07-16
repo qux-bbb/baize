@@ -91,6 +91,7 @@ h1 { font-family: var(--font); font-size: 1.25rem; font-weight: 700; }
   background: #131c31; border: 1px solid #1e293b; border-radius: 12px;
   width: 640px; max-height: 80vh; overflow-y: auto; padding: 1.5rem;
 }
+.modal-wide { width: 900px; }
 .modal-header {
   display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1.2rem; font-size: 1rem;
 }
