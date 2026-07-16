@@ -493,6 +493,19 @@ func getFieldUint(fields map[string]interface{}, key string) uint64 {
 }
 
 func buildSummary(fields map[string]interface{}) string {
+	eventType := getFieldStr(fields, "event_type")
+
+	// 进程事件：用 path，没有则用 pid
+	if eventType == "process_create" || eventType == "process_terminate" {
+		if img := getFieldStr(fields, "image_path"); img != "" {
+			return img
+		}
+		if pid := getFieldUint(fields, "pid"); pid > 0 {
+			return fmt.Sprintf("[PID %d] %s", pid, eventType)
+		}
+		return eventType
+	}
+
 	if img := getFieldStr(fields, "image_path"); img != "" {
 		return img
 	}
@@ -500,7 +513,8 @@ func buildSummary(fields map[string]interface{}) string {
 		return fp
 	}
 	if rip := getFieldStr(fields, "remote_ip"); rip != "" {
-		return fmt.Sprintf("%s:%s", rip, fields["remote_port"])
+		port := getFieldUint(fields, "remote_port")
+		return fmt.Sprintf("%s:%d", rip, port)
 	}
 	if rk := getFieldStr(fields, "registry_key"); rk != "" {
 		return rk
@@ -512,7 +526,10 @@ func buildSummary(fields map[string]interface{}) string {
 		return fmt.Sprintf("%s → %s", rn, getFieldStr(fields, "target_path"))
 	}
 	if cl := getFieldStr(fields, "command_line"); cl != "" {
-		return cl[:min(len(cl), 120)]
+		if len(cl) > 120 {
+			cl = cl[:120]
+		}
+		return cl
 	}
-	return getFieldStr(fields, "event_type")
+	return eventType
 }

@@ -50,7 +50,7 @@ pub async fn start(
                             image_path: proc
                                 .exe()
                                 .map(|p| p.to_string_lossy().to_string())
-                                .unwrap_or_default(),
+                                .unwrap_or_else(|| proc.name().to_string_lossy().to_string()),
                             hash_sha256: String::new(),
                             timestamp_ns: now,
                             user: String::new(),
