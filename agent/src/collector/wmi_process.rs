@@ -281,7 +281,6 @@ unsafe extern "system" fn dns_callback(
             pid = xml[s..s+end].parse::<u32>().unwrap_or(0) as u64;
         }
     }
-    let process_name = "svchost.exe".to_string();
     let query_name = extract_xml(&xml, "Data", Some("QueryName"));
     let query_type_str = extract_xml(&xml, "Data", Some("QueryType"));
     let result_ips = extract_xml(&xml, "Data", Some("QueryResults"));
@@ -299,7 +298,7 @@ unsafe extern "system" fn dns_callback(
         let _ = tx.blocking_send(pb::Event {
             agent_info: None, sequence_id: 0,
             event_type: Some(pb::event::EventType::DnsQuery(pb::DnsQueryEvent {
-                pid, process_name, query_name,
+                pid, process_name: String::new(), query_name,
                 query_type: qtype.to_string(), result_ips, timestamp_ns: now,
             })),
         });
