@@ -284,6 +284,41 @@ unsafe extern "system" fn dns_callback(
     let query_name = extract_xml(&xml, "Data", Some("QueryName"));
     let query_type_str = extract_xml(&xml, "Data", Some("QueryType"));
     let result_ips = extract_xml(&xml, "Data", Some("QueryResults"));
+    // QueryResults 格式: 以 ; 分隔，每个条目为:
+    //   ::ffff:x.x.x.x  → A 记录 (IPv4-mapped IPv6)
+    //   type: 5 domain  → CNAME
+    //   type: 16 text   → 诊断信息 (跳过)
+    //   裸 IPv4/IPv6     → A/AAAA 记录
+    let ips: Vec<String> = result_ips.split(';')
+        .filter_map(|s| {
+            let s = s.trim();
+            if s.is_empty() { return None; }
+
+            if let Some(rest) = s.strip_prefix("type: ") {
+                // type: N value 格式
+                let rest = rest.trim();
+                let type_end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+                let rec_type: u16 = rest[..type_end].parse().ok()?;
+                let value = rest[type_end..].trim();
+
+                match rec_type {
+                    5 => Some(format!("CNAME {}", value)), // CNAME 保留参考
+                    16 => None,                             // 诊断信息跳过
+                    _ => None,
+                }
+            } else {
+                // 裸 IP 地址
+                if let Some(ipv4) = s.strip_prefix("::ffff:") {
+                    Some(ipv4.to_string()) // ::ffff:x.x.x.x → x.x.x.x
+                } else if s.contains(':') || s.contains('.') {
+                    Some(s.to_string())    // 裸 IPv4 或 IPv6
+                } else {
+                    None
+                }
+            }
+        })
+        .collect();
+    let result_ips = ips.join("; ");
 
     let qtype = match query_type_str.as_str() {
         "1" => "A",
