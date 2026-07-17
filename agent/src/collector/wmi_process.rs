@@ -15,7 +15,7 @@
 use anyhow::{Context, Result};
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
-use std::sync::OnceLock;
+use std::sync::Mutex;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{error, info};
@@ -25,7 +25,7 @@ use windows::Win32::System::EventLog::*;
 
 use crate::pb;
 
-static EVTSUB_TX: OnceLock<mpsc::Sender<pb::Event>> = OnceLock::new();
+static EVTSUB_TX: Mutex<Option<mpsc::Sender<pb::Event>>> = Mutex::new(None);
 
 /// 从 XML 片段中提取标签内的文本
 fn extract_xml(xml: &str, _tag: &str, attr: Option<&str>) -> String {
@@ -138,7 +138,7 @@ unsafe extern "system" fn subscribe_callback(
             }
 
             let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
-            if let Some(tx) = EVTSUB_TX.get() {
+            if let Some(tx) = EVTSUB_TX.lock().unwrap().as_ref() {
                 let _ = tx.blocking_send(pb::Event {
                     agent_info: None, sequence_id: 0,
                     event_type: Some(pb::event::EventType::ProcessCreate(pb::ProcessCreateEvent {
@@ -165,7 +165,7 @@ unsafe extern "system" fn subscribe_callback(
             let direction = if direction_str.contains("14593") { "outbound" } else { "inbound" };
 
             let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
-            if let Some(tx) = EVTSUB_TX.get() {
+            if let Some(tx) = EVTSUB_TX.lock().unwrap().as_ref() {
                 let _ = tx.blocking_send(pb::Event {
                     agent_info: None, sequence_id: 0,
                     event_type: Some(pb::event::EventType::NetworkConnection(pb::NetworkConnectionEvent {
@@ -295,7 +295,7 @@ unsafe extern "system" fn dns_callback(
     };
 
     let now = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64;
-    if let Some(tx) = EVTSUB_TX.get() {
+    if let Some(tx) = EVTSUB_TX.lock().unwrap().as_ref() {
         let _ = tx.blocking_send(pb::Event {
             agent_info: None, sequence_id: 0,
             event_type: Some(pb::event::EventType::DnsQuery(pb::DnsQueryEvent {
@@ -311,9 +311,7 @@ pub fn start_evtsub(tx: mpsc::Sender<pb::Event>) -> Result<()> {
     // DNS 订阅需要独立的 tx（在 tx 被 EVTSUB_TX 消费前 clone）
     let dns_tx = tx.clone();
 
-    EVTSUB_TX
-        .set(tx)
-        .map_err(|_| anyhow::anyhow!("EvtSubscribe 已初始化"))?;
+    *EVTSUB_TX.lock().unwrap() = Some(tx);
 
     // 自动启用 Windows 审计策略（进程创建 4688 + 网络连接 5156）
     enable_audit_policies();
