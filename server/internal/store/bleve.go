@@ -576,12 +576,8 @@ func buildSummary(fields map[string]interface{}) string {
 		return fmt.Sprintf("%s → %s", rn, getFieldStr(fields, "target_path"))
 	}
 	if qn := getFieldStr(fields, "query_name"); qn != "" {
-		proc := getFieldStr(fields, "process_name")
-		rip := getFieldStr(fields, "result_ips")
-		if proc != "" && rip != "" {
-			return fmt.Sprintf("%s → %s (%s)", proc, qn, rip)
-		} else if proc != "" {
-			return fmt.Sprintf("%s → %s", proc, qn)
+		if rip := getFieldStr(fields, "result_ips"); rip != "" {
+			return fmt.Sprintf("%s → %s", qn, rip)
 		}
 		return qn
 	}
