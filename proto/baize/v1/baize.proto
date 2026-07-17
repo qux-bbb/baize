@@ -212,6 +212,12 @@ message ExecuteScriptCommand {
   string reason = 4;
 }
 
+// 配置文件监控目录
+message ConfigureFileWatchCommand {
+  repeated string watch_dirs = 1;  // 要监控的目录列表, 空数组 = 停止监控
+  string reason = 2;
+}
+
 // 指令包装器
 message Command {
   string command_id = 1;          // 指令唯一 ID (Server 生成)
@@ -221,6 +227,7 @@ message Command {
     KillProcessCommand kill_process = 11;
     DeleteFileCommand delete_file = 12;
     ExecuteScriptCommand execute_script = 13;
+    ConfigureFileWatchCommand configure_file_watch = 14;
   }
 }
 

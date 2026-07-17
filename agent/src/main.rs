@@ -170,21 +170,8 @@ async fn run(
         });
     }
 
-    // 文件监控 — 默认监控系统临时目录
-    let watch_dirs = if watch.is_empty() {
-        get_default_watch_dirs()
-    } else {
-        watch.split(',').map(|s| s.trim().to_string()).collect()
-    };
-    if !watch_dirs.is_empty() {
-        let file_tx = tx.clone();
-        info!("[FileMon] 启动文件监控: {:?}", watch_dirs);
-        tokio::spawn(async move {
-            if let Err(e) = collector::file::start(watch_dirs, file_tx).await {
-                error!("文件监控错误: {:?}", e);
-            }
-        });
-    }
+    // 文件监控由 Server 通过 ConfigureFileWatchCommand 指令控制
+    // Agent 不再默认启动文件监控，等待服务端下配置
 
     // 转发线程：rx → AgentInfo + seq → gRPC 流
     let (request_tx, request_rx) = mpsc::channel::<Event>(1024);
@@ -238,6 +225,19 @@ async fn run(
                 }
                 CommandType::ExecuteScript(script_cmd) => {
                     execute_script(&script_cmd.script_content, &script_cmd.interpreter)
+                }
+                CommandType::ConfigureFileWatch(fw_cmd) => {
+                    info!("[配置] 文件监控目录: {:?}", fw_cmd.watch_dirs);
+                    let dirs: Vec<String> = fw_cmd.watch_dirs.clone();
+                    if !dirs.is_empty() {
+                        let file_tx = tx.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = collector::file::start(dirs, file_tx).await {
+                                error!("文件监控错误: {:?}", e);
+                            }
+                        });
+                    }
+                    Ok(())
                 }
             };
 

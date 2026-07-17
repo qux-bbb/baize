@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
+import ConfigPage from './ConfigPage'
+import './config.css'
 
 interface Host {
   agent_id: string; hostname: string; os_type: string; os_version: string;
@@ -22,7 +24,7 @@ interface EventItem {
   summary: string; pid?: number; hostname: string
 }
 
-type Route = { page: 'hosts' } | { page: 'alerts' } | { page: 'events'; host?: string } | { page: 'host-detail'; agentId: string }
+type Route = { page: 'hosts' } | { page: 'alerts' } | { page: 'events'; host?: string } | { page: 'host-detail'; agentId: string } | { page: 'config' } | { page: 'config' }
 
 const API = '/api'
 
@@ -52,6 +54,7 @@ function parseHash(): Route {
 
   if (path.startsWith('hosts/')) return { page: 'host-detail', agentId: path.slice(6) }
   if (path === 'alerts') return { page: 'alerts' }
+  if (path === 'config') return { page: 'config' }
   if (path === 'events') return { page: 'events', host: params.get('host') || undefined }
   return { page: 'hosts' }
 }
@@ -75,6 +78,7 @@ export default function App() {
   }, [])
 
   const load = useCallback(async () => {
+    if (route.page === 'config') return
     setLoading(true); setErr('')
     try {
       if (route.page === 'hosts') {
@@ -124,6 +128,7 @@ export default function App() {
               <button onClick={() => navigate('hosts')} className={route.page === 'hosts' ? 'active' : ''}>🖥 主机 ({hosts.length})</button>
               <button onClick={() => navigate('alerts')} className={route.page === 'alerts' ? 'active' : ''}>🚨 告警 ({alerts.length})</button>
               <button onClick={() => navigate('events')} className={route.page === 'events' ? 'active' : ''}>📋 事件</button>
+              <button onClick={() => navigate('config')} className={route.page === 'config' ? 'active' : ''}>⚙ 配置</button>
             </div>
           )}
         </div>
@@ -154,6 +159,8 @@ export default function App() {
             {hosts.length === 0 && <div className="empty">暂无在线主机</div>}
           </div>
         )}
+
+        {!loading && route.page === 'config' && <ConfigPage />}
 
         {!loading && route.page === 'host-detail' && host && (
           <div className="host-detail">

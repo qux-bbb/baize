@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"google.golang.org/grpc"
 
@@ -26,9 +27,10 @@ import (
 var webFS embed.FS
 type baizeServer struct {
 	pb.UnimplementedBaizeServiceServer
-	es     *store.Store
-	engine *engine.Engine
-	cmdBus *engine.CommandBus
+	es       *store.Store
+	engine   *engine.Engine
+	cmdBus   *engine.CommandBus
+	cfg      *engine.ConfigManager
 }
 
 func (s *baizeServer) AgentStream(stream pb.BaizeService_AgentStreamServer) error {
@@ -58,7 +60,20 @@ func (s *baizeServer) AgentStream(stream pb.BaizeService_AgentStreamServer) erro
 	})
 	defer s.cmdBus.Unregister(agentID)
 
-	// 后台协程: 从 cmdChan 读取指令并写入 stream
+	// 下发文件监控配置（主机级优先，无则用全局）
+	dirs := s.cfg.GetWatchDirs(agentID)
+	cmdChan <- &pb.Command{
+		CommandId: fmt.Sprintf("filewatch-init-%d", time.Now().Unix()),
+		IssuedAtNs: uint64(time.Now().UnixNano()),
+		CommandType: &pb.Command_ConfigureFileWatch{
+			ConfigureFileWatch: &pb.ConfigureFileWatchCommand{
+				WatchDirs: dirs,
+				Reason:    "server config",
+			},
+		},
+	}
+
+	// 后台协程
 	go func() {
 		for cmd := range cmdChan {
 			if err := stream.Send(cmd); err != nil {
@@ -221,16 +236,19 @@ func main() {
 
 	s := grpc.NewServer()
 	cmdBus := engine.NewCommandBus()
-	pb.RegisterBaizeServiceServer(s, &baizeServer{es: bleveStore, engine: eng, cmdBus: cmdBus})
+	cfg := engine.NewConfigManager()
+	pb.RegisterBaizeServiceServer(s, &baizeServer{es: bleveStore, engine: eng, cmdBus: cmdBus, cfg: cfg})
 
 	// 启动 HTTP API + Dashboard Server
 	{
 		mux := http.NewServeMux()
 		if bleveStore != nil {
-			apiHandler := api.New(bleveStore, cmdBus)
+			apiHandler := api.New(bleveStore, cmdBus, cfg)
 			mux.HandleFunc("GET /api/hosts", apiHandler.Hosts)
 			mux.HandleFunc("GET /api/alerts", apiHandler.Alerts)
 			mux.HandleFunc("GET /api/alert", apiHandler.AlertDetail)
+			mux.HandleFunc("GET /api/config/file-watch", apiHandler.ConfigFileWatch)
+			mux.HandleFunc("POST /api/config/file-watch", apiHandler.ConfigFileWatch)
 			mux.HandleFunc("GET /api/events", apiHandler.Events)
 		}
 		mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {

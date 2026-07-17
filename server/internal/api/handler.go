@@ -3,8 +3,11 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"time"
 
+	pb "github.com/qux-bbb/baize/proto/gen/go/baize/v1"
 	"github.com/qux-bbb/baize/server/internal/engine"
 	"github.com/qux-bbb/baize/server/internal/store"
 )
@@ -12,10 +15,11 @@ import (
 type Handler struct {
 	store   *store.Store
 	cmdBus  *engine.CommandBus
+	cfg     *engine.ConfigManager
 }
 
-func New(s *store.Store, cmdBus *engine.CommandBus) *Handler {
-	return &Handler{store: s, cmdBus: cmdBus}
+func New(s *store.Store, cmdBus *engine.CommandBus, cfg *engine.ConfigManager) *Handler {
+	return &Handler{store: s, cmdBus: cmdBus, cfg: cfg}
 }
 
 // ── 主机列表 ──────────────────────────────────────────────
@@ -62,6 +66,52 @@ func (h *Handler) AlertDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(doc)
+}
+
+// ── 文件监控配置 ─────────────────────────────────────────
+
+func (h *Handler) ConfigFileWatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "GET" {
+		configs := h.cfg.GetAll()
+		json.NewEncoder(w).Encode(configs)
+		return
+	}
+	if r.Method != "POST" {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	var req struct {
+		AgentID string   `json:"agent_id"`
+		Dirs    []string `json:"dirs"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json", 400)
+		return
+	}
+	if req.AgentID == "" {
+		h.cfg.SetGlobal(req.Dirs)
+	} else {
+		h.cfg.SetAgent(req.AgentID, req.Dirs)
+	}
+
+	// 立即推送给在线 Agent
+	cmd := &pb.Command{
+		CommandId:  fmt.Sprintf("filewatch-%d", time.Now().UnixNano()),
+		IssuedAtNs: uint64(time.Now().UnixNano()),
+		CommandType: &pb.Command_ConfigureFileWatch{
+			ConfigureFileWatch: &pb.ConfigureFileWatchCommand{
+				WatchDirs: req.Dirs,
+				Reason:    "api config",
+			},
+		},
+	}
+	if req.AgentID == "" {
+		h.cmdBus.Broadcast(cmd)
+	} else {
+		h.cmdBus.SendToAgent(req.AgentID, cmd)
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 // ── 事件时间线 ──────────────────────────────────────────────
