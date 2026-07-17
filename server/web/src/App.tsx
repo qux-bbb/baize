@@ -92,6 +92,11 @@ export default function App() {
     setLoading(false)
   }, [route.page, route.page === 'events' ? (route as any).host : undefined])
 
+  // 初始加载时 fetch 一次主机列表，之后页面切换不重置
+  useEffect(() => {
+    fetchJSON<{ hosts: Host[] }>(`${API}/hosts`).then(d => setHosts(d.hosts)).catch(() => {})
+  }, [])
+
   useEffect(() => { load() }, [load])
 
   async function showAlertDetail(alertID: string) {
@@ -128,7 +133,7 @@ export default function App() {
         {err && <div className="error">{err}</div>}
         {loading && <div className="loading">加载中...</div>}
 
-        {!loading && route.page === 'hosts' && (
+        {!loading && route.page === 'hosts' && hosts && (
           <div className="grid">
             {hosts.map(h => (
               <div key={h.agent_id} className="card" onClick={() => navigate('hosts/' + h.agent_id)}>
