@@ -273,8 +273,15 @@ unsafe extern "system" fn dns_callback(
     let xml = OsString::from_wide(&xml_buf).to_string_lossy().to_string();
     if !xml.contains("EventID>3008") { return 0; }
 
-    let pid = extract_pid(&xml, "ProcessId");
-    let process_name = extract_xml(&xml, "Data", Some("ProcessName"));
+    // DNS 事件的 PID 在 <Execution ProcessID='...'/> 属性中
+    let mut pid: u64 = 0;
+    if let Some(start) = xml.find("ProcessID='") {
+        let s = start + "ProcessID='".len();
+        if let Some(end) = xml[s..].find("'") {
+            pid = xml[s..s+end].parse::<u32>().unwrap_or(0) as u64;
+        }
+    }
+    let process_name = "svchost.exe".to_string();
     let query_name = extract_xml(&xml, "Data", Some("QueryName"));
     let query_type_str = extract_xml(&xml, "Data", Some("QueryType"));
     let result_ips = extract_xml(&xml, "Data", Some("QueryResults"));

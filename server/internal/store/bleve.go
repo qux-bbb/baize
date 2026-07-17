@@ -265,7 +265,7 @@ func (s *Store) SearchEvents(hostname string, size int) ([]EventResult, error) {
 	search := bleve.NewSearchRequest(q)
 	search.Size = size
 	search.SortBy([]string{"-@timestamp"})
-	search.Fields = []string{"@timestamp", "event_type", "event_action", "pid", "hostname", "image_path", "file_path", "remote_ip", "remote_port", "registry_key", "task_name", "rule_name", "target_path", "command_line", "process_name", "query_name"}
+	search.Fields = []string{"@timestamp", "event_type", "event_action", "pid", "hostname", "image_path", "file_path", "remote_ip", "remote_port", "registry_key", "task_name", "rule_name", "target_path", "command_line", "process_name", "query_name", "query_type", "result_ips"}
 
 	result, err := s.index.Search(search)
 	if err != nil {
@@ -560,7 +560,10 @@ func buildSummary(fields map[string]interface{}) string {
 	}
 	if qn := getFieldStr(fields, "query_name"); qn != "" {
 		proc := getFieldStr(fields, "process_name")
-		if proc != "" {
+		rip := getFieldStr(fields, "result_ips")
+		if proc != "" && rip != "" {
+			return fmt.Sprintf("%s → %s (%s)", proc, qn, rip)
+		} else if proc != "" {
 			return fmt.Sprintf("%s → %s", proc, qn)
 		}
 		return qn
