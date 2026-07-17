@@ -24,7 +24,7 @@ interface EventItem {
   summary: string; pid?: number; hostname: string
 }
 
-type Route = { page: 'hosts' } | { page: 'alerts' } | { page: 'events'; host?: string } | { page: 'host-detail'; agentId: string } | { page: 'config' } | { page: 'config' }
+type Route = { page: 'hosts' } | { page: 'alerts' } | { page: 'events'; host?: string; q?: string } | { page: 'host-detail'; agentId: string } | { page: 'config' } | { page: 'config' }
 
 const API = '/api'
 
@@ -70,9 +70,12 @@ export default function App() {
   const [err, setErr] = useState('')
   const [detail, setDetail] = useState<AlertDetail | null>(null)
   const [eventDetail, setEventDetail] = useState<any | null>(null)
+  const [searchQ, setSearchQ] = useState('')
+  const [hostInput, setHostInput] = useState('')
 
   useEffect(() => {
-    const onHash = () => setRoute(parseHash())
+    const onHash = () => { const r = parseHash(); setRoute(r); setSearchQ((r as any).q || ''); setHostInput((r as any).host || '') }
+    onHash()
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
@@ -88,17 +91,36 @@ export default function App() {
         const d = await fetchJSON<{ alerts: Alert[] }>(`${API}/alerts`)
         setAlerts(d.alerts)
       } else if (route.page === 'events') {
-        const q = route.host ? `?hostname=${route.host}` : ''
-        const d = await fetchJSON<{ events: EventItem[] }>(`${API}/events${q}`)
+        let params = new URLSearchParams()
+        if (route.host) params.set('hostname', route.host)
+        if ((route as any).q) params.set('q', (route as any).q)
+        const qs = params.toString()
+        const d = await fetchJSON<{ events: EventItem[] }>(`${API}/events${qs ? '?' + qs : ''}`)
         setEvents(d.events)
       }
     } catch (e: any) { setErr(e.message) }
     setLoading(false)
-  }, [route.page, route.page === 'events' ? (route as any).host : undefined])
+  }, [route.page, route.page === 'events' ? ((route as any).host + '|' + ((route as any).q || '')) : undefined])
 
   // 初始加载时 fetch 一次主机列表，之后页面切换不重置
   useEffect(() => {
     fetchJSON<{ hosts: Host[] }>(`${API}/hosts`).then(d => setHosts(d.hosts)).catch(() => {})
+  }, [])
+
+  // 搜索函数：读 DOM、更新 hash、调 API
+  const doSearch = useCallback(async () => {
+    const inputs = document.querySelectorAll('.filter-bar .input') as unknown as HTMLInputElement[]
+    const hostVal = inputs[0]?.value || ''
+    const searchVal = inputs[1]?.value || ''
+    const params = new URLSearchParams()
+    if (hostVal) params.set('hostname', hostVal)
+    if (searchVal) params.set('q', searchVal)
+    const qs = params.toString()
+    const url = `${API}/events${qs ? '?' + qs : ''}`
+    try {
+      const d = await fetchJSON<{ events: EventItem[] }>(url)
+      setEvents(d.events)
+    } catch (e: any) { setErr(e.message) }
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -222,11 +244,23 @@ export default function App() {
         {!loading && route.page === 'events' && (
           <>
             <div className="filter-bar">
-              <input value={route.host || ''} onChange={e => {
+              <input value={hostInput} onChange={e => setHostInput(e.target.value)} onBlur={e => {
                 const v = e.target.value
-                navigate(v ? 'events?host=' + v : 'events')
-              }} placeholder="按主机名过滤..." className="input" />
-              <button onClick={load} className="btn">查询</button>
+                const params = new URLSearchParams()
+                if (v) params.set('hostname', v)
+                if ((route as any).q) params.set('q', (route as any).q)
+                const qs = params.toString()
+                navigate(qs ? 'events?' + qs : 'events')
+              }} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }} placeholder="按主机名过滤..." className="input" style={{width:'auto',flex:1}} />
+              <input value={(route as any).q || searchQ} onChange={e => setSearchQ(e.target.value)} onBlur={e => {
+                const v = e.target.value
+                const params = new URLSearchParams()
+                if ((route as any).host) params.set('hostname', (route as any).host)
+                if (v) params.set('q', v)
+                const qs = params.toString()
+                navigate(qs ? 'events?' + qs : 'events')
+              }} onKeyDown={e => { if (e.key === 'Enter') { (e.target as HTMLInputElement).blur() } }} placeholder="搜索 (PID, IP, 域名, 文件名)..." className="input" style={{width:'auto',flex:2}} />
+              <button onClick={doSearch} className="btn">查询</button>
             </div>
             <table className="table">
               <thead><tr><th>时间</th><th>主机</th><th>类型</th><th>摘要</th></tr></thead>

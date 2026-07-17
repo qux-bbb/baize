@@ -7,10 +7,10 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/blevesearch/bleve/v2"
-	"github.com/blevesearch/bleve/v2/search/query"
 
 	pb "github.com/qux-bbb/baize/proto/gen/go/baize/v1"
 )
@@ -254,13 +254,9 @@ func (s *Store) SearchAlerts(size int) ([]AlertResult, int, error) {
 }
 
 // SearchEvents 查询事件时间线
-func (s *Store) SearchEvents(hostname string, size int) ([]EventResult, error) {
-	var q query.Query
-	if hostname != "" {
-		q = bleve.NewQueryStringQuery(fmt.Sprintf(`type:event hostname:"%s"`, hostname))
-	} else {
-		q = bleve.NewQueryStringQuery(`type:event`)
-	}
+func (s *Store) SearchEvents(hostname, query string, size int) ([]EventResult, error) {
+	// Bleve query string 的 + 语法不稳定，先查全部再在 Go 中过滤
+	q := bleve.NewQueryStringQuery("type:event")
 
 	search := bleve.NewSearchRequest(q)
 	search.Size = size
@@ -274,6 +270,27 @@ func (s *Store) SearchEvents(hostname string, size int) ([]EventResult, error) {
 
 	var events []EventResult
 	for _, hit := range result.Hits {
+		// Go-side 过滤
+		if hostname != "" {
+			if getFieldStr(hit.Fields, "hostname") != hostname {
+				continue
+			}
+		}
+		if query != "" {
+			// 检查所有字段
+			matched := false
+			for _, f := range []string{"hostname","event_type","image_path","command_line",
+				"file_path","remote_ip","process_name","query_name","result_ips",
+				"summary","registry_key","task_name","target_path","protocol","direction"} {
+				if v := getFieldStr(hit.Fields, f); v != "" && strings.Contains(strings.ToLower(v), strings.ToLower(query)) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
 		events = append(events, EventResult{
 			Timestamp: getFieldStr(hit.Fields, "@timestamp"),
 			EventType: getFieldStr(hit.Fields, "event_type"),

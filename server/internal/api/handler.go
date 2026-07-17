@@ -118,7 +118,8 @@ func (h *Handler) ConfigFileWatch(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Events(w http.ResponseWriter, r *http.Request) {
 	hostname := r.URL.Query().Get("hostname")
-	events, err := h.store.SearchEvents(hostname, 100)
+	q := r.URL.Query().Get("q")
+	events, err := h.store.SearchEvents(hostname, q, 100)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
