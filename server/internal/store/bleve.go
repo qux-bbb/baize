@@ -261,7 +261,7 @@ func (s *Store) SearchEvents(hostname, query string, size int) ([]EventResult, e
 	search := bleve.NewSearchRequest(q)
 	search.Size = size
 	search.SortBy([]string{"-@timestamp"})
-	search.Fields = []string{"@timestamp", "event_type", "event_action", "pid", "hostname", "image_path", "file_path", "remote_ip", "remote_port", "registry_key", "task_name", "rule_name", "target_path", "command_line", "process_name", "query_name", "query_type", "result_ips"}
+	search.Fields = []string{"@timestamp", "event_type", "event_action", "pid", "hostname", "image_path", "file_path", "local_ip", "local_port", "remote_ip", "remote_port", "registry_key", "task_name", "rule_name", "target_path", "command_line", "process_name", "query_name", "query_type", "result_ips"}
 
 	result, err := s.index.Search(search)
 	if err != nil {
@@ -280,7 +280,7 @@ func (s *Store) SearchEvents(hostname, query string, size int) ([]EventResult, e
 			// 检查所有字段
 			matched := false
 			for _, f := range []string{"hostname","event_type","image_path","command_line",
-				"file_path","remote_ip","process_name","query_name","result_ips",
+				"file_path","local_ip","remote_ip","process_name","query_name","result_ips",
 				"summary","registry_key","task_name","target_path","protocol","direction"} {
 				if v := getFieldStr(hit.Fields, f); v != "" && strings.Contains(strings.ToLower(v), strings.ToLower(query)) {
 					matched = true
@@ -557,14 +557,22 @@ func buildSummary(fields map[string]interface{}) string {
 	}
 	if rip := getFieldStr(fields, "remote_ip"); rip != "" {
 		port := getFieldUint(fields, "remote_port")
+		lIP := getFieldStr(fields, "local_ip")
+		lPort := getFieldUint(fields, "local_port")
 		proc := getFieldStr(fields, "process_name")
 		pid := getFieldUint(fields, "pid")
-		if proc != "" && pid > 0 {
-			return fmt.Sprintf("%s (PID %d) → %s:%d", proc, pid, rip, port)
-		} else if proc != "" {
-			return fmt.Sprintf("%s → %s:%d", proc, rip, port)
+		// 格式: proc (PID) local:port → remote:port
+		dest := fmt.Sprintf("%s:%d", rip, port)
+		src := ""
+		if lIP != "" {
+			src = fmt.Sprintf("%s:%d → ", lIP, lPort)
 		}
-		return fmt.Sprintf("%s:%d", rip, port)
+		if proc != "" && pid > 0 {
+			return fmt.Sprintf("%s (PID %d) %s%s", proc, pid, src, dest)
+		} else if proc != "" {
+			return fmt.Sprintf("%s %s%s", proc, src, dest)
+		}
+		return fmt.Sprintf("%s%s", src, dest)
 	}
 	if rk := getFieldStr(fields, "registry_key"); rk != "" {
 		return rk
