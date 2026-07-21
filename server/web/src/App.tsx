@@ -70,6 +70,9 @@ export default function App() {
   const [err, setErr] = useState('')
   const [detail, setDetail] = useState<AlertDetail | null>(null)
   const [eventDetail, setEventDetail] = useState<any | null>(null)
+  const [procs, setProcs] = useState<any[]>([])
+  const [conns, setConns] = useState<any[]>([])
+  const [sysLoading, setSysLoading] = useState(false)
   const [searchQ, setSearchQ] = useState('')
   const [hostInput, setHostInput] = useState('')
 
@@ -97,15 +100,32 @@ export default function App() {
         const qs = params.toString()
         const d = await fetchJSON<{ events: EventItem[] }>(`${API}/events${qs ? '?' + qs : ''}`)
         setEvents(d.events)
+      } else if (route.page === 'host-detail') {
+        // 系统信息通过点击刷新获取，不由 load 自动加载
       }
     } catch (e: any) { setErr(e.message) }
     setLoading(false)
-  }, [route.page, route.page === 'events' ? ((route as any).host + '|' + ((route as any).q || '')) : undefined])
+  }, [route.page, route.page === 'events' ? ((route as any).host + '|' + ((route as any).q || '')) : undefined,
+    route.page === 'host-detail' ? (route as any).agentId : undefined])
 
   // 初始加载时 fetch 一次主机列表，之后页面切换不重置
   useEffect(() => {
     fetchJSON<{ hosts: Host[] }>(`${API}/hosts`).then(d => setHosts(d.hosts)).catch(() => {})
   }, [])
+
+  // 加载系统信息（进程/网络）
+  const loadSysInfo = useCallback(async () => {
+    if (route.page !== 'host-detail') return
+    setSysLoading(true)
+    try {
+      const d = await fetchJSON<any>(`${API}/systeminfo?agent_id=${(route as any).agentId}`)
+      setProcs(d.processes || [])
+      setConns((d.tcp_connections || []).concat(d.udp_endpoints || []))
+    } catch (e: any) {
+      setErr(e.message)
+    }
+    setSysLoading(false)
+  }, [route.page, (route as any).agentId])
 
   // 搜索函数：读 DOM、更新 hash、调 API
   const doSearch = useCallback(async () => {
@@ -214,6 +234,36 @@ export default function App() {
             </div>
             <div className="detail-actions">
               <button className="btn" onClick={() => navigate('events?host=' + host.hostname)}>查看事件</button>
+              <button className="btn" onClick={load} style={{marginLeft:'0.5rem'}}>刷新</button>
+            </div>
+            <div style={{marginTop:'1rem', display:'flex', gap:'1rem'}}>
+              <div style={{flex:1}}>
+                <h3 style={{margin:'0 0 0.5rem'}}>
+                  进程 ({procs.length})
+                  <button className="btn" onClick={loadSysInfo} style={{marginLeft:'0.5rem',fontSize:'0.7rem'}} disabled={sysLoading}>{sysLoading ? '加载中...' : '刷新'}</button>
+                </h3>
+                <table className="table">
+                  <thead><tr><th>PID</th><th>名称</th><th>CPU%</th><th>内存</th></tr></thead>
+                  <tbody>
+                    {procs.slice(0,30).map((p,i) => (
+                      <tr key={i}><td className="mono">{p.pid}</td><td className="summary">{p.name}</td><td>{p.cpu?.toFixed(1)}</td><td>{(p.memory / 1024).toFixed(0)}KB</td></tr>
+                    ))}
+                    {procs.length === 0 && <tr><td colSpan={4} className="empty">点击刷新获取进程信息</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{flex:1}}>
+                <h3 style={{margin:'0 0 0.5rem'}}>网络连接 ({conns.length})</h3>
+                <table className="table">
+                  <thead><tr><th>PID</th><th>本地</th><th>远程</th><th>状态</th></tr></thead>
+                  <tbody>
+                    {conns.slice(0,30).map((c,i) => (
+                      <tr key={i}><td className="mono">{c.pid}</td><td className="mono">{c.local}</td><td className="mono">{c.remote || '-'}</td><td>{c.state}</td></tr>
+                    ))}
+                    {conns.length === 0 && <tr><td colSpan={4} className="empty">点击刷新获取连接信息</td></tr>}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}

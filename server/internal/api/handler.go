@@ -130,6 +130,23 @@ func (h *Handler) Events(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"events": events, "total": len(events)})
 }
 
+// ── 系统信息查询 ──────────────────────────────────────────
+
+func (h *Handler) SystemInfo(w http.ResponseWriter, r *http.Request) {
+	agentID := r.URL.Query().Get("agent_id")
+	if agentID == "" {
+		http.Error(w, "missing agent_id", 400)
+		return
+	}
+	jsonStr, err := h.cmdBus.QuerySystemInfo(agentID)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(jsonStr))
+}
+
 // ── CORS ──────────────────────────────────────────────────
 
 func CORSMiddleware(next http.Handler) http.Handler {

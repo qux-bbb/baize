@@ -169,11 +169,14 @@ func (s *baizeServer) Heartbeat(ctx context.Context, info *pb.AgentInfo) (*pb.Em
 }
 
 func (s *baizeServer) ReportCommandResult(ctx context.Context, result *pb.CommandResult) (*pb.Empty, error) {
-	status := "成功"
+	status := "done"
 	if !result.GetSuccess() {
-		status = "失败: " + result.GetErrorMessage()
+		status = "err: " + result.GetErrorMessage()
 	}
 	log.Printf("[CommandResult] Command=%s %s", result.GetCommandId(), status)
+	if s.cmdBus != nil {
+		s.cmdBus.HandleResult(result)
+	}
 	return &pb.Empty{}, nil
 }
 
@@ -262,6 +265,7 @@ func main() {
 			mux.HandleFunc("GET /api/config/file-watch", apiHandler.ConfigFileWatch)
 			mux.HandleFunc("POST /api/config/file-watch", apiHandler.ConfigFileWatch)
 			mux.HandleFunc("GET /api/events", apiHandler.Events)
+			mux.HandleFunc("GET /api/systeminfo", apiHandler.SystemInfo)
 		}
 		mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]string{"status": "ok"})

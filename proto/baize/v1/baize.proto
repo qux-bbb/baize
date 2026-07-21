@@ -228,7 +228,13 @@ message Command {
     DeleteFileCommand delete_file = 12;
     ExecuteScriptCommand execute_script = 13;
     ConfigureFileWatchCommand configure_file_watch = 14;
+    QuerySystemInfoCommand query_system_info = 15;
   }
+}
+
+// 查询系统信息 (进程/网络)
+message QuerySystemInfoCommand {
+  string reason = 1;
 }
 
 // ---------------------------------------------------------------------------

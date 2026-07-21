@@ -241,16 +241,16 @@ async fn run(
             use pb::command::CommandType;
             let result = match cmd_type {
                 CommandType::Isolate(isolate_cmd) => {
-                    execute_isolate(isolate_cmd.isolate)
+                    execute_isolate(isolate_cmd.isolate).map(|_| String::new())
                 }
                 CommandType::KillProcess(kill_cmd) => {
-                    execute_kill_process(kill_cmd.pid)
+                    execute_kill_process(kill_cmd.pid).map(|_| String::new())
                 }
                 CommandType::DeleteFile(del_cmd) => {
-                    execute_delete_file(&del_cmd.file_path, del_cmd.force)
+                    execute_delete_file(&del_cmd.file_path, del_cmd.force).map(|_| String::new())
                 }
                 CommandType::ExecuteScript(script_cmd) => {
-                    execute_script(&script_cmd.script_content, &script_cmd.interpreter)
+                    execute_script(&script_cmd.script_content, &script_cmd.interpreter).map(|_| String::new())
                 }
                 CommandType::ConfigureFileWatch(fw_cmd) => {
                     info!("[配置] 文件监控目录: {:?}", fw_cmd.watch_dirs);
@@ -263,12 +263,17 @@ async fn run(
                             }
                         });
                     }
-                    Ok(())
+                    Ok(String::new())
+                }
+                CommandType::QuerySystemInfo(_) => {
+                    query_system_info()
                 }
             };
 
-            let success = result.is_ok();
-            let error_msg = result.err().map(|e| e.to_string()).unwrap_or_default();
+            let (success, output, error_msg) = match result {
+                Ok(out) => (true, out, String::new()),
+                Err(e) => (false, String::new(), e.to_string()),
+            };
             info!("指令 {} 执行结果: success={} error={}", cmd.command_id, success, error_msg);
 
             // 上报执行结果
@@ -276,7 +281,7 @@ async fn run(
                 command_id: cmd.command_id.clone(),
                 success,
                 error_message: error_msg,
-                output: String::new(),
+                output,
                 completed_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64,
             };
             let _ = client.report_command_result(result_msg).await;
@@ -408,4 +413,124 @@ fn execute_script(content: &str, interpreter: &str) -> anyhow::Result<()> {
     }
     tracing::warn!("[响应] 脚本执行成功: {} bytes", stdout.len());
     Ok(())
+}
+
+// ── 系统信息查询 ──────────────────────────────────────
+#[cfg(windows)]
+fn query_system_info() -> anyhow::Result<String> {
+    use serde::Serialize;
+    use windows::Win32::NetworkManagement::IpHelper::*;
+
+    const AF_INET: u32 = 2;
+
+    #[derive(Serialize)]
+    struct SysInfo {
+        processes: Vec<ProcInfo>,
+        tcp_connections: Vec<ConnInfo>,
+        udp_endpoints: Vec<ConnInfo>,
+    }
+    #[derive(Serialize)]
+    struct ProcInfo {
+        pid: u32,
+        name: String,
+        cpu: f32,
+        memory: u64,
+    }
+    #[derive(Serialize)]
+    struct ConnInfo {
+        pid: u32,
+        local: String,
+        remote: String,
+        state: String,
+    }
+
+    let mut info = SysInfo {
+        processes: vec![],
+        tcp_connections: vec![],
+        udp_endpoints: vec![],
+    };
+
+    // 进程信息 (sysinfo)
+    let mut sys = sysinfo::System::new();
+    sys.refresh_all();
+    for (pid, proc) in sys.processes() {
+        info.processes.push(ProcInfo {
+            pid: pid.as_u32(),
+            name: proc.name().to_string_lossy().into(),
+            cpu: proc.cpu_usage(),
+            memory: proc.memory(),
+        });
+    }
+
+    unsafe {
+        // TCP 连接表
+        let mut buf_size: u32 = 0;
+        let _ = GetExtendedTcpTable(
+            None, &mut buf_size as *mut u32, false, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0,
+        );
+        if buf_size > 0 {
+            let mut buf = vec![0u8; buf_size as usize];
+            if GetExtendedTcpTable(
+                Some(buf.as_mut_ptr() as *mut core::ffi::c_void),
+                &mut buf_size as *mut u32, false, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0,
+            ) == 0 {
+                let table = &*(buf.as_ptr() as *const MIB_TCPTABLE_OWNER_PID);
+                let entries = std::slice::from_raw_parts(
+                    table.table.as_ptr(),
+                    table.dwNumEntries as usize,
+                );
+                for row in entries {
+                    let local = std::net::Ipv4Addr::from(row.dwLocalAddr.to_ne_bytes());
+                    let remote = std::net::Ipv4Addr::from(row.dwRemoteAddr.to_ne_bytes());
+                    let state = match row.dwState {
+                        1 => "CLOSED", 2 => "LISTEN", 3 => "SYN_SENT",
+                        4 => "SYN_RCVD", 5 => "ESTABLISHED", 6 => "FIN_WAIT1",
+                        7 => "FIN_WAIT2", 8 => "CLOSE_WAIT", 9 => "CLOSING",
+                        10 => "LAST_ACK", 11 => "TIME_WAIT", _ => "UNKNOWN",
+                    };
+                    info.tcp_connections.push(ConnInfo {
+                        pid: row.dwOwningPid,
+                        local: format!("{}:{}", local, u16::from_be(row.dwLocalPort as u16)),
+                        remote: format!("{}:{}", remote, u16::from_be(row.dwRemotePort as u16)),
+                        state: state.to_string(),
+                    });
+                }
+            }
+        }
+
+        // UDP 监听表
+        let mut buf_size: u32 = 0;
+        let _ = GetExtendedUdpTable(
+            None, &mut buf_size as *mut u32, false, AF_INET, UDP_TABLE_OWNER_PID, 0,
+        );
+        if buf_size > 0 {
+            let mut buf = vec![0u8; buf_size as usize];
+            if GetExtendedUdpTable(
+                Some(buf.as_mut_ptr() as *mut core::ffi::c_void),
+                &mut buf_size as *mut u32, false, AF_INET, UDP_TABLE_OWNER_PID, 0,
+            ) == 0 {
+                let table = &*(buf.as_ptr() as *const MIB_UDPTABLE_OWNER_PID);
+                let entries = std::slice::from_raw_parts(
+                    table.table.as_ptr(),
+                    table.dwNumEntries as usize,
+                );
+                for row in entries {
+                    let local = std::net::Ipv4Addr::from(row.dwLocalAddr.to_ne_bytes());
+                    info.udp_endpoints.push(ConnInfo {
+                        pid: row.dwOwningPid,
+                        local: format!("{}:{}", local, u16::from_be(row.dwLocalPort as u16)),
+                        remote: String::new(),
+                        state: "LISTEN".to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(serde_json::to_string(&info)?)
+}
+
+#[cfg(not(windows))]
+fn query_system_info() -> anyhow::Result<String> {
+    Err(anyhow::anyhow!("系统信息查询仅支持 Windows"))
 }

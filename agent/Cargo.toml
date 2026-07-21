@@ -25,7 +25,7 @@ windows-service = "0.7"
 
 [dependencies.windows]
 version = "0.58"
-features = ["Win32_System_Diagnostics_Etw", "Win32_Foundation", "Win32_System_Time", "Win32_System_EventLog"]
+features = ["Win32_System_Diagnostics_Etw", "Win32_Foundation", "Win32_System_Time", "Win32_System_EventLog", "Win32_Storage_FileSystem", "Win32_NetworkManagement_IpHelper"]
 
 [build-dependencies]
 tonic-build = "0.12"
