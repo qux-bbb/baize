@@ -263,17 +263,18 @@ export default function App() {
               <button onClick={doSearch} className="btn">查询</button>
             </div>
             <table className="table">
-              <thead><tr><th>时间</th><th>主机</th><th>类型</th><th>摘要</th></tr></thead>
+              <thead><tr><th>时间</th><th>主机</th><th>类型</th><th>摘要</th><th></th></tr></thead>
               <tbody>
                 {events.map((e, i) => (
-                  <tr key={i} className="clickable" onClick={() => setEventDetail(e)}>
+                  <tr key={i}>
                     <td className="ago">{timeAgo(e['@timestamp'])}</td>
                     <td>{e.hostname}</td>
                     <td className="mono">{e.event_type}{e.event_action ? '/' + e.event_action : ''}</td>
                     <td className="summary">{e.summary}</td>
+                    <td className="action"><span className="link" onClick={() => setEventDetail(e)}>详情</span></td>
                   </tr>
                 ))}
-                {events.length === 0 && <tr><td colSpan={4} className="empty">暂无事件</td></tr>}
+                {events.length === 0 && <tr><td colSpan={5} className="empty">暂无事件</td></tr>}
               </tbody>
             </table>
           </>

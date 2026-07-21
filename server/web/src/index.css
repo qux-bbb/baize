@@ -71,6 +71,9 @@ h1 { font-family: var(--font); font-size: 1.25rem; font-weight: 700; }
 }
 .btn:hover { background: rgba(34, 211, 238, 0.2); }
 .clickable { cursor: pointer; }
+.action { text-align: center; }
+.link { color: #60a5fa; cursor: pointer; }
+.link:hover { text-decoration: underline; }
 .back { cursor: pointer; color: var(--accent); margin-right: 0.3rem; font-size: 1.1rem; }
 .back:hover { opacity: 0.7; }
 
