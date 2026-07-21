@@ -72,6 +72,7 @@ export default function App() {
   const [eventDetail, setEventDetail] = useState<any | null>(null)
   const [procs, setProcs] = useState<any[]>([])
   const [conns, setConns] = useState<any[]>([])
+  const [procDetail, setProcDetail] = useState<any | null>(null)
   const [sysLoading, setSysLoading] = useState(false)
   const [searchQ, setSearchQ] = useState('')
   const [hostInput, setHostInput] = useState('')
@@ -245,12 +246,12 @@ export default function App() {
                 <h3 style={{margin:'0 0 0.5rem'}}>进程 ({procs.length})</h3>
                 <div className="scroll-table">
                 <table className="table">
-                  <thead><tr><th>PID</th><th>名称</th><th>CPU%</th><th>内存</th></tr></thead>
+                  <thead><tr><th>PID</th><th>名称</th><th>CPU%</th><th>内存</th><th></th></tr></thead>
                   <tbody>
                     {procs.map((p,i) => (
-                      <tr key={i}><td className="mono">{p.pid}</td><td className="summary">{p.name}</td><td>{p.cpu?.toFixed(1)}</td><td>{(p.memory / 1024).toFixed(0)}KB</td></tr>
+                      <tr key={i}><td className="mono">{p.pid}</td><td>{p.name}</td><td>{p.cpu?.toFixed(1)}</td><td>{(p.memory / 1024).toFixed(0)}KB</td><td className="action"><span className="link" onClick={() => setProcDetail(p)}>详情</span></td></tr>
                     ))}
-                    {procs.length === 0 && <tr><td colSpan={4} className="empty">点击刷新获取进程信息</td></tr>}
+                    {procs.length === 0 && <tr><td colSpan={5} className="empty">点击刷新获取进程信息</td></tr>}
                   </tbody>
                 </table>
                 </div>
@@ -386,6 +387,27 @@ export default function App() {
                     <tr key={k}><td className="mono">{k}</td><td className="mono">{String(v)}</td></tr>
                   ))}
                   {!eventDetail.raw && <tr><td colSpan={2} className="empty">无详细数据</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+      {procDetail && (
+        <div className="overlay" onClick={() => setProcDetail(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <strong>进程详情 · PID {procDetail.pid}</strong>
+              <span className="mono" style={{marginLeft:'0.6rem'}}>{procDetail.name}</span>
+              <button className="close" onClick={() => setProcDetail(null)}>×</button>
+            </div>
+            <div className="modal-body">
+              <table className="kv-table">
+                <tbody>
+                  {[['PID', procDetail.pid], ['名称', procDetail.name], ['路径', procDetail.exe],
+                    ['CPU', procDetail.cpu?.toFixed(1) + '%'], ['内存', (procDetail.memory / 1024).toFixed(0) + ' KB']].map(([k,v]) => (
+                    <tr key={k as string}><td className="mono">{k as string}</td><td className="mono">{String(v)}</td></tr>
+                  ))}
                 </tbody>
               </table>
             </div>

@@ -433,6 +433,7 @@ fn query_system_info() -> anyhow::Result<String> {
     struct ProcInfo {
         pid: u32,
         name: String,
+        exe: String,
         cpu: f32,
         memory: u64,
     }
@@ -457,6 +458,7 @@ fn query_system_info() -> anyhow::Result<String> {
         info.processes.push(ProcInfo {
             pid: pid.as_u32(),
             name: proc.name().to_string_lossy().into(),
+            exe: proc.exe().map(|p| p.to_string_lossy().into()).unwrap_or_default(),
             cpu: proc.cpu_usage(),
             memory: proc.memory(),
         });
