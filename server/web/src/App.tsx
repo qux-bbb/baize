@@ -242,27 +242,31 @@ export default function App() {
                   进程 ({procs.length})
                   <button className="btn" onClick={loadSysInfo} style={{marginLeft:'0.5rem',fontSize:'0.7rem'}} disabled={sysLoading}>{sysLoading ? '加载中...' : '刷新'}</button>
                 </h3>
+                <div className="scroll-table">
                 <table className="table">
                   <thead><tr><th>PID</th><th>名称</th><th>CPU%</th><th>内存</th></tr></thead>
                   <tbody>
-                    {procs.slice(0,30).map((p,i) => (
+                    {procs.map((p,i) => (
                       <tr key={i}><td className="mono">{p.pid}</td><td className="summary">{p.name}</td><td>{p.cpu?.toFixed(1)}</td><td>{(p.memory / 1024).toFixed(0)}KB</td></tr>
                     ))}
                     {procs.length === 0 && <tr><td colSpan={4} className="empty">点击刷新获取进程信息</td></tr>}
                   </tbody>
                 </table>
+                </div>
               </div>
               <div style={{flex:1}}>
                 <h3 style={{margin:'0 0 0.5rem'}}>网络连接 ({conns.length})</h3>
+                <div className="scroll-table">
                 <table className="table">
                   <thead><tr><th>PID</th><th>本地</th><th>远程</th><th>状态</th></tr></thead>
                   <tbody>
-                    {conns.slice(0,30).map((c,i) => (
+                    {conns.map((c,i) => (
                       <tr key={i}><td className="mono">{c.pid}</td><td className="mono">{c.local}</td><td className="mono">{c.remote || '-'}</td><td>{c.state}</td></tr>
                     ))}
                     {conns.length === 0 && <tr><td colSpan={4} className="empty">点击刷新获取连接信息</td></tr>}
                   </tbody>
                 </table>
+                </div>
               </div>
             </div>
           </div>
