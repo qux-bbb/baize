@@ -234,14 +234,15 @@ export default function App() {
             </div>
             <div className="detail-actions">
               <button className="btn" onClick={() => navigate('events?host=' + host.hostname)}>查看事件</button>
-              <button className="btn" onClick={load} style={{marginLeft:'0.5rem'}}>刷新</button>
             </div>
-            <div style={{marginTop:'1rem', display:'flex', gap:'1rem'}}>
+            <div style={{marginTop:'1rem'}}>
+              <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'0.5rem'}}>
+                <span style={{fontSize:'0.9rem', fontWeight:600}}>系统信息</span>
+                <button className="btn" onClick={loadSysInfo} disabled={sysLoading} style={{fontSize:'0.75rem'}}>{sysLoading ? '加载中...' : '刷新'}</button>
+              </div>
+              <div style={{display:'flex', gap:'1rem'}}>
               <div style={{flex:1}}>
-                <h3 style={{margin:'0 0 0.5rem'}}>
-                  进程 ({procs.length})
-                  <button className="btn" onClick={loadSysInfo} style={{marginLeft:'0.5rem',fontSize:'0.7rem'}} disabled={sysLoading}>{sysLoading ? '加载中...' : '刷新'}</button>
-                </h3>
+                <h3 style={{margin:'0 0 0.5rem'}}>进程 ({procs.length})</h3>
                 <div className="scroll-table">
                 <table className="table">
                   <thead><tr><th>PID</th><th>名称</th><th>CPU%</th><th>内存</th></tr></thead>
@@ -268,6 +269,7 @@ export default function App() {
                 </table>
                 </div>
               </div>
+            </div>
             </div>
           </div>
         )}
