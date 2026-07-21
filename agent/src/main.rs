@@ -13,6 +13,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use std::fs;
+use std::io::Write;
 use sysinfo::System;
 use tokio::sync::mpsc;
 use tokio::time;
@@ -51,8 +53,32 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // 日志同时输出到 stderr 和 data/agent.log
+    fs::create_dir_all("data").ok();
+    let log_file = fs::OpenOptions::new()
+        .create(true).append(true).open("data/agent.log").unwrap();
     tracing_subscriber::fmt()
         .with_env_filter("baize_agent=info")
+        .with_ansi(false)
+        .with_writer(move || {
+            let file = log_file.try_clone().unwrap();
+            struct Tee {
+                stderr: std::io::Stderr,
+                file: fs::File,
+            }
+            impl Write for Tee {
+                fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                    let n = self.stderr.write(buf)?;
+                    self.file.write_all(buf)?;
+                    Ok(n)
+                }
+                fn flush(&mut self) -> std::io::Result<()> {
+                    self.stderr.flush()?;
+                    self.file.flush()
+                }
+            }
+            Tee { stderr: std::io::stderr(), file }
+        })
         .init();
 
     let cli = Cli::parse();

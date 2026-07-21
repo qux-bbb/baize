@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net"
@@ -214,6 +215,17 @@ func initEngine(esStore *store.Store) *engine.Engine {
 func main() {
 	port := flag.Int("port", 50051, "gRPC 端口")
 	flag.Parse()
+
+	// 日志写入文件（与 stderr 同时输出）
+	logDir := filepath.Join(".", "data")
+	os.MkdirAll(logDir, 0755)
+	logPath := filepath.Join(logDir, "server.log")
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err == nil {
+		log.SetOutput(io.MultiWriter(os.Stderr, logFile))
+		log.Printf("[Log] 日志已写入: %s", logPath)
+		defer logFile.Close()
+	}
 
 	// 初始化 Bleve 存储
 	log.Printf("[Store] 初始化 Bleve 索引...")
