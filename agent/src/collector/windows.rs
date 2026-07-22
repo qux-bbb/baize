@@ -105,9 +105,10 @@ fn parse_network_connect(xml: &str, now: u64) -> Option<pb::Event> {
     Some(pb::Event {
         agent_info: None, sequence_id: 0,
         event_type: Some(pb::event::EventType::NetworkConnection(pb::NetworkConnectionEvent {
-            pid, process_name,
-            local_ip: if dir == "outbound" { src_addr.clone() } else { dst_addr.clone() },
-            local_port: if dir == "outbound" { src_port.parse().unwrap_or(0) } else { dst_port.parse().unwrap_or(0) },
+        	pid, process_name,
+        	image_path: String::new(),
+        	local_ip: if dir == "outbound" { src_addr.clone() } else { dst_addr.clone() },
+        	local_port: if dir == "outbound" { src_port.parse().unwrap_or(0) } else { dst_port.parse().unwrap_or(0) },
             remote_ip: if dir == "outbound" { dst_addr } else { src_addr },
             remote_port: if dir == "outbound" { dst_port.parse().unwrap_or(0) } else { src_port.parse().unwrap_or(0) },
             protocol: proto.to_string(), direction: dir.to_string(), timestamp_ns: now,

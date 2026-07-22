@@ -87,13 +87,14 @@ message FileDeleteEvent {
 message NetworkConnectionEvent {
   uint64 pid = 1;                 // 发起连接的进程 PID
   string process_name = 2;        // 进程名
-  string local_ip = 3;            // 本端 IP
-  uint32 local_port = 4;          // 本端端口
-  string remote_ip = 5;           // 远端 IP
-  uint32 remote_port = 6;         // 远端端口
-  string protocol = 7;            // tcp / udp
-  string direction = 8;           // inbound / outbound
-  uint64 timestamp_ns = 9;
+  string image_path = 3;          // 进程完整路径
+  string local_ip = 4;            // 本端 IP
+  uint32 local_port = 5;          // 本端端口
+  string remote_ip = 6;           // 远端 IP
+  uint32 remote_port = 7;         // 远端端口
+  string protocol = 8;            // tcp / udp
+  string direction = 9;           // inbound / outbound
+  uint64 timestamp_ns = 10;
 }
 
 // 注册表变更 (仅 Windows)

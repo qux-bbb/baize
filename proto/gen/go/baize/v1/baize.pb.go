@@ -576,13 +576,14 @@ type NetworkConnectionEvent struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Pid           uint64                 `protobuf:"varint,1,opt,name=pid,proto3" json:"pid,omitempty"`                                   // 发起连接的进程 PID
 	ProcessName   string                 `protobuf:"bytes,2,opt,name=process_name,json=processName,proto3" json:"process_name,omitempty"` // 进程名
-	LocalIp       string                 `protobuf:"bytes,3,opt,name=local_ip,json=localIp,proto3" json:"local_ip,omitempty"`             // 本端 IP
-	LocalPort     uint32                 `protobuf:"varint,4,opt,name=local_port,json=localPort,proto3" json:"local_port,omitempty"`      // 本端端口
-	RemoteIp      string                 `protobuf:"bytes,5,opt,name=remote_ip,json=remoteIp,proto3" json:"remote_ip,omitempty"`          // 远端 IP
-	RemotePort    uint32                 `protobuf:"varint,6,opt,name=remote_port,json=remotePort,proto3" json:"remote_port,omitempty"`   // 远端端口
-	Protocol      string                 `protobuf:"bytes,7,opt,name=protocol,proto3" json:"protocol,omitempty"`                          // tcp / udp
-	Direction     string                 `protobuf:"bytes,8,opt,name=direction,proto3" json:"direction,omitempty"`                        // inbound / outbound
-	TimestampNs   uint64                 `protobuf:"varint,9,opt,name=timestamp_ns,json=timestampNs,proto3" json:"timestamp_ns,omitempty"`
+	ImagePath     string                 `protobuf:"bytes,3,opt,name=image_path,json=imagePath,proto3" json:"image_path,omitempty"`       // 进程完整路径
+	LocalIp       string                 `protobuf:"bytes,4,opt,name=local_ip,json=localIp,proto3" json:"local_ip,omitempty"`             // 本端 IP
+	LocalPort     uint32                 `protobuf:"varint,5,opt,name=local_port,json=localPort,proto3" json:"local_port,omitempty"`      // 本端端口
+	RemoteIp      string                 `protobuf:"bytes,6,opt,name=remote_ip,json=remoteIp,proto3" json:"remote_ip,omitempty"`          // 远端 IP
+	RemotePort    uint32                 `protobuf:"varint,7,opt,name=remote_port,json=remotePort,proto3" json:"remote_port,omitempty"`   // 远端端口
+	Protocol      string                 `protobuf:"bytes,8,opt,name=protocol,proto3" json:"protocol,omitempty"`                          // tcp / udp
+	Direction     string                 `protobuf:"bytes,9,opt,name=direction,proto3" json:"direction,omitempty"`                        // inbound / outbound
+	TimestampNs   uint64                 `protobuf:"varint,10,opt,name=timestamp_ns,json=timestampNs,proto3" json:"timestamp_ns,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -627,6 +628,13 @@ func (x *NetworkConnectionEvent) GetPid() uint64 {
 func (x *NetworkConnectionEvent) GetProcessName() string {
 	if x != nil {
 		return x.ProcessName
+	}
+	return ""
+}
+
+func (x *NetworkConnectionEvent) GetImagePath() string {
+	if x != nil {
+		return x.ImagePath
 	}
 	return ""
 }
@@ -2145,19 +2153,22 @@ const file_baize_v1_baize_proto_rawDesc = "" +
 	"hashSha256\x12\x10\n" +
 	"\x03pid\x18\x04 \x01(\x04R\x03pid\x12!\n" +
 	"\fprocess_name\x18\x05 \x01(\tR\vprocessName\x12!\n" +
-	"\ftimestamp_ns\x18\x06 \x01(\x04R\vtimestampNs\"\xa2\x02\n" +
+	"\ftimestamp_ns\x18\x06 \x01(\x04R\vtimestampNs\"\xc1\x02\n" +
 	"\x16NetworkConnectionEvent\x12\x10\n" +
 	"\x03pid\x18\x01 \x01(\x04R\x03pid\x12!\n" +
-	"\fprocess_name\x18\x02 \x01(\tR\vprocessName\x12\x19\n" +
-	"\blocal_ip\x18\x03 \x01(\tR\alocalIp\x12\x1d\n" +
+	"\fprocess_name\x18\x02 \x01(\tR\vprocessName\x12\x1d\n" +
 	"\n" +
-	"local_port\x18\x04 \x01(\rR\tlocalPort\x12\x1b\n" +
-	"\tremote_ip\x18\x05 \x01(\tR\bremoteIp\x12\x1f\n" +
-	"\vremote_port\x18\x06 \x01(\rR\n" +
+	"image_path\x18\x03 \x01(\tR\timagePath\x12\x19\n" +
+	"\blocal_ip\x18\x04 \x01(\tR\alocalIp\x12\x1d\n" +
+	"\n" +
+	"local_port\x18\x05 \x01(\rR\tlocalPort\x12\x1b\n" +
+	"\tremote_ip\x18\x06 \x01(\tR\bremoteIp\x12\x1f\n" +
+	"\vremote_port\x18\a \x01(\rR\n" +
 	"remotePort\x12\x1a\n" +
-	"\bprotocol\x18\a \x01(\tR\bprotocol\x12\x1c\n" +
-	"\tdirection\x18\b \x01(\tR\tdirection\x12!\n" +
-	"\ftimestamp_ns\x18\t \x01(\x04R\vtimestampNs\"\xe4\x01\n" +
+	"\bprotocol\x18\b \x01(\tR\bprotocol\x12\x1c\n" +
+	"\tdirection\x18\t \x01(\tR\tdirection\x12!\n" +
+	"\ftimestamp_ns\x18\n" +
+	" \x01(\x04R\vtimestampNs\"\xe4\x01\n" +
 	"\x13RegistryChangeEvent\x12\x19\n" +
 	"\bkey_path\x18\x01 \x01(\tR\akeyPath\x12\x1d\n" +
 	"\n" +

@@ -22,6 +22,7 @@ use tracing::{error, info};
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::*;
 use windows::Win32::System::EventLog::*;
+use windows::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
 
 use crate::pb;
 
@@ -151,7 +152,6 @@ unsafe extern "system" fn subscribe_callback(
         } else if xml.contains("EventID>5156") {
             // 网络连接事件
             let pid = extract_pid(&xml, "ProcessID");
-            let process_name = extract_xml(&xml, "Data", Some("Application"));
             let local_ip = extract_xml(&xml, "Data", Some("SourceAddress"));
             let local_port_str = extract_xml(&xml, "Data", Some("SourcePort"));
             let remote_ip = extract_xml(&xml, "Data", Some("DestAddress"));
@@ -169,7 +169,10 @@ unsafe extern "system" fn subscribe_callback(
                 let _ = tx.blocking_send(pb::Event {
                     agent_info: None, sequence_id: 0,
                     event_type: Some(pb::event::EventType::NetworkConnection(pb::NetworkConnectionEvent {
-                        pid, process_name, local_ip, local_port, remote_ip, remote_port,
+                        pid,
+                        process_name: extract_xml(&xml, "Data", Some("Application")),
+                        image_path: get_process_path(pid),
+                        local_ip, local_port, remote_ip, remote_port,
                         protocol: protocol.to_string(), direction: direction.to_string(), timestamp_ns: now,
                     })),
                 });
@@ -339,6 +342,24 @@ unsafe extern "system" fn dns_callback(
         });
     }
     0
+}
+
+/// 通过 PID 查询进程完整路径（QueryFullProcessImageNameW）
+fn get_process_path(pid: u64) -> String {
+    unsafe {
+        let handle = match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid as u32) {
+            Ok(h) => h,
+            Err(_) => return String::new(),
+        };
+        let mut buf = vec![0u16; 4096];
+        let mut size = buf.len() as u32;
+        let result = QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, windows::core::PWSTR(buf.as_mut_ptr()), &mut size);
+        let _ = CloseHandle(handle);
+        if result.is_ok() && size > 0 {
+            return String::from_utf16_lossy(&buf[..size as usize]);
+        }
+    }
+    String::new()
 }
 
 pub fn start_evtsub(tx: mpsc::Sender<pb::Event>) -> Result<()> {

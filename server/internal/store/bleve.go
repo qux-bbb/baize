@@ -380,6 +380,7 @@ func eventToDoc(event *pb.Event) EventDoc {
 		doc.Direction = e.NetworkConnection.GetDirection()
 		doc.PID = e.NetworkConnection.GetPid()
 		doc.ProcessName = extractName(e.NetworkConnection.GetProcessName())
+		doc.ImagePath = e.NetworkConnection.GetImagePath()
 
 	case *pb.Event_RegistryChange:
 		doc.Category = "registry"
@@ -549,9 +550,6 @@ func buildSummary(fields map[string]interface{}) string {
 		return eventType
 	}
 
-	if img := getFieldStr(fields, "image_path"); img != "" {
-		return img
-	}
 	if fp := getFieldStr(fields, "file_path"); fp != "" {
 		return fp
 	}
