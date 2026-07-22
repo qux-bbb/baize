@@ -74,6 +74,10 @@ func (s *baizeServer) AgentStream(stream pb.BaizeService_AgentStreamServer) erro
 		},
 	}
 
+	// 下发事件类型配置
+	effectiveET := s.cfg.GetEffectiveEventTypes(agentID)
+	cmdChan <- engine.BuildConfigureEventTypesCmd(effectiveET)
+
 	// 后台协程
 	go func() {
 		for cmd := range cmdChan {
@@ -264,6 +268,8 @@ func main() {
 			mux.HandleFunc("GET /api/alert", apiHandler.AlertDetail)
 			mux.HandleFunc("GET /api/config/file-watch", apiHandler.ConfigFileWatch)
 			mux.HandleFunc("POST /api/config/file-watch", apiHandler.ConfigFileWatch)
+			mux.HandleFunc("GET /api/config/event-types", apiHandler.ConfigEventTypes)
+			mux.HandleFunc("POST /api/config/event-types", apiHandler.ConfigEventTypes)
 			mux.HandleFunc("GET /api/events", apiHandler.Events)
 			mux.HandleFunc("GET /api/systeminfo", apiHandler.SystemInfo)
 		}

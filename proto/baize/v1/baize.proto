@@ -218,6 +218,15 @@ message ConfigureFileWatchCommand {
   string reason = 2;
 }
 
+// 配置事件类型开关
+message ConfigureEventTypesCommand {
+  map<string, bool> categories = 1;
+  // key: process / file / network / dns / registry / task / yara
+  // value: true = 收集, false = 不收集
+  // 未出现的 key 保持原状态不变
+  string reason = 2;
+}
+
 // 指令包装器
 message Command {
   string command_id = 1;          // 指令唯一 ID (Server 生成)
@@ -229,6 +238,7 @@ message Command {
     ExecuteScriptCommand execute_script = 13;
     ConfigureFileWatchCommand configure_file_watch = 14;
     QuerySystemInfoCommand query_system_info = 15;
+    ConfigureEventTypesCommand configure_event_types = 16;
   }
 }
 

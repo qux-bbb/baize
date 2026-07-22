@@ -8,7 +8,9 @@ pub mod pb {
     tonic::include_proto!("baize.v1");
 }
 
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::RwLock;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -199,13 +201,24 @@ async fn run(
     // 文件监控由 Server 通过 ConfigureFileWatchCommand 指令控制
     // Agent 不再默认启动文件监控，等待服务端下配置
 
-    // 转发线程：rx → AgentInfo + seq → gRPC 流
+    // 事件类型开关（默认全部关闭，等待 Server 下发配置）
+    let enabled_events: Arc<RwLock<HashMap<String, bool>>> = Arc::new(RwLock::new(HashMap::new()));
+
+    // 转发线程：rx → 过滤 → AgentInfo + seq → gRPC 流
     let (request_tx, request_rx) = mpsc::channel::<Event>(1024);
     let agent_info_clone = agent_info.clone();
+    let ee = Arc::clone(&enabled_events);
 
     tokio::spawn(async move {
         let mut seq: u64 = 0;
         while let Some(mut event) = rx.recv().await {
+            // 过滤禁用的事件类型
+            if let Some(cat) = get_event_category(&event) {
+                let enabled = ee.read().unwrap();
+                if enabled.get(cat) == Some(&false) {
+                    continue; // 已禁用，丢弃
+                }
+            }
             seq += 1;
             event.agent_info = Some(agent_info_clone.clone());
             event.sequence_id = seq;
@@ -268,6 +281,14 @@ async fn run(
                 CommandType::QuerySystemInfo(_) => {
                     query_system_info()
                 }
+                CommandType::ConfigureEventTypes(et_cmd) => {
+                    info!("[配置] 事件类型开关: {:?}", et_cmd.categories);
+                    let mut enabled = enabled_events.write().unwrap();
+                    for (k, v) in &et_cmd.categories {
+                        enabled.insert(k.clone(), *v);
+                    }
+                    Ok(String::new())
+                }
             };
 
             let (success, output, error_msg) = match result {
@@ -290,6 +311,21 @@ async fn run(
 
     info!("Server 流已关闭");
     Ok(())
+}
+
+// ── 辅助函数 ──────────────────────────────────────────
+
+/// 获取事件对应的配置类别
+fn get_event_category(event: &pb::Event) -> Option<&'static str> {
+    match event.event_type.as_ref()? {
+        pb::event::EventType::ProcessCreate(_) | pb::event::EventType::ProcessTerminate(_) => Some("process"),
+        pb::event::EventType::FileCreate(_) | pb::event::EventType::FileModify(_) | pb::event::EventType::FileDelete(_) => Some("file"),
+        pb::event::EventType::NetworkConnection(_) => Some("network"),
+        pb::event::EventType::DnsQuery(_) => Some("dns"),
+        pb::event::EventType::RegistryChange(_) => Some("registry"),
+        pb::event::EventType::ScheduledTask(_) => Some("task"),
+        pb::event::EventType::YaraMatch(_) => Some("yara"),
+    }
 }
 
 // ── Agent ID 持久化 ─────────────────────────────────────

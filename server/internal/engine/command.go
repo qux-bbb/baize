@@ -138,6 +138,20 @@ func BuildIsolateCmd(isolate bool) *pb.Command {
 	}
 }
 
+// BuildConfigureEventTypesCmd 组装事件类型配置指令
+func BuildConfigureEventTypesCmd(categories map[string]bool) *pb.Command {
+	return &pb.Command{
+		CommandId:  fmt.Sprintf("et-%d", time.Now().UnixNano()),
+		IssuedAtNs: uint64(time.Now().UnixNano()),
+		CommandType: &pb.Command_ConfigureEventTypes{
+			ConfigureEventTypes: &pb.ConfigureEventTypesCommand{
+				Categories: categories,
+				Reason:     "server config",
+			},
+		},
+	}
+}
+
 // BuildKillCmd 组装杀进程指令
 func BuildKillCmd(pid uint64) *pb.Command {
 	return &pb.Command{

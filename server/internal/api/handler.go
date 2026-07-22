@@ -130,6 +130,48 @@ func (h *Handler) Events(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"events": events, "total": len(events)})
 }
 
+// ── 事件类型配置 ──────────────────────────────────────────
+
+// ConfigEventTypes GET: 返回全局 + Agent 级事件类型配置
+// POST: 设置事件类型开关（agent_id=空=全局，有值=指定Agent）
+func (h *Handler) ConfigEventTypes(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "GET" {
+		all := h.cfg.GetEventTypesAll()
+		json.NewEncoder(w).Encode(all)
+		return
+	}
+
+	if r.Method != "POST" {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+
+	var req struct {
+		AgentID    string         `json:"agent_id"`
+		Categories map[string]bool `json:"categories"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json", 400)
+		return
+	}
+
+	if req.AgentID == "" {
+		// 设置全局，广播给所有在线 Agent
+		h.cfg.SetEventTypesGlobal(req.Categories)
+		effective := h.cfg.GetEventTypesGlobal()
+		cmd := engine.BuildConfigureEventTypesCmd(effective)
+		h.cmdBus.Broadcast(cmd)
+	} else {
+		// 设置指定 Agent
+		h.cfg.SetEventTypesAgent(req.AgentID, req.Categories)
+		effective := h.cfg.GetEffectiveEventTypes(req.AgentID)
+		cmd := engine.BuildConfigureEventTypesCmd(effective)
+		_ = h.cmdBus.SendToAgent(req.AgentID, cmd)
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
 // ── 系统信息查询 ──────────────────────────────────────────
 
 func (h *Handler) SystemInfo(w http.ResponseWriter, r *http.Request) {

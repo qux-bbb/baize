@@ -10,3 +10,17 @@
 .config-page button:hover { background: #2563eb; }
 .config-page .msg { margin-left: 0.6rem; font-size: 0.8rem; color: #22c55e; }
 .config-list { margin-top: 1rem; }
+
+/* Event type toggles */
+.event-types { margin-top: 2rem; border-top: 1px solid #334155; padding-top: 1.2rem; }
+.event-types h3 { margin-bottom: 1rem; }
+.toggle-grid { display: flex; flex-direction: column; gap: 0.3rem; }
+.toggle-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 0; }
+.toggle-row .label { flex: 1; font-size: 0.85rem; }
+.toggle-row .desc { font-size: 0.75rem; opacity: 0.5; }
+.toggle-switch { position: relative; width: 40px; height: 22px; flex-shrink: 0; cursor: pointer; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-slider { position: absolute; inset: 0; background: #334155; border-radius: 22px; transition: 0.2s; }
+.toggle-slider::before { content: ''; position: absolute; left: 3px; bottom: 3px; width: 16px; height: 16px; background: #94a3b8; border-radius: 50%; transition: 0.2s; }
+.toggle-switch input:checked + .toggle-slider { background: #3b82f6; }
+.toggle-switch input:checked + .toggle-slider::before { transform: translateX(18px); background: #fff; }
