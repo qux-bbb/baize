@@ -85,10 +85,24 @@ baize-agent.exe
 ```
 
 ### 3. 编译 Agent（改代码后）
-```bash
-cd agent
+
+在 **cmd.exe** 中执行（需要设置 PROTOC 环境变量）：
+
+```cmd
+cd D:\files\projects\Baize\agent
+set PROTOC=C:\Users\q\protoc\bin\protoc.exe
 cargo build
 ```
+
+或在 **PowerShell** 中：
+
+```powershell
+cd D:\files\projects\Baize\agent
+$env:PROTOC="C:\Users\q\protoc\bin\protoc.exe"
+cargo build
+```
+
+> 注意：Agent 编译时需要 protoc 生成 gRPC 桩代码。`PROTOC` 环境变量指向 protoc.exe 路径。如果已设置到系统 PATH 则可省略。
 
 ### 4. 编译 Protobuf（改了 proto 文件后需要重新生成）
 ```bash
