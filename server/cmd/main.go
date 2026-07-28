@@ -301,7 +301,7 @@ func main() {
 			Handler: api.CORSMiddleware(mux),
 		}
 		go func() {
-			log.Printf("[HTTP] Dashboard + API: :8080")
+			log.Printf("[HTTP] Dashboard + API: http://localhost:%d", 8080)
 			if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				log.Printf("[HTTP] 错误: %v", err)
 			}
