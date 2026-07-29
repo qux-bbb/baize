@@ -248,6 +248,10 @@ func main() {
 	// 初始化检测引擎
 	eng := initEngine(bleveStore)
 
+	// 初始化认证
+	authPath := filepath.Join(".", "data", "auth.json")
+	authManager := api.NewAuthManager(authPath)
+
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
 	if err != nil {
 		log.Fatalf("监听端口 %d 失败: %v", *port, err)
@@ -262,7 +266,10 @@ func main() {
 	{
 		mux := http.NewServeMux()
 		if bleveStore != nil {
-			apiHandler := api.New(bleveStore, cmdBus, cfg)
+			apiHandler := api.New(bleveStore, cmdBus, cfg, authManager)
+			mux.HandleFunc("POST /api/login", apiHandler.Login)
+			mux.HandleFunc("POST /api/change-password", apiHandler.ChangePassword)
+			mux.HandleFunc("POST /api/logout", apiHandler.Logout)
 			mux.HandleFunc("GET /api/hosts", apiHandler.Hosts)
 			mux.HandleFunc("GET /api/alerts", apiHandler.Alerts)
 			mux.HandleFunc("GET /api/alert", apiHandler.AlertDetail)
@@ -298,7 +305,7 @@ func main() {
 		})
 		httpSrv := &http.Server{
 			Addr:    fmt.Sprintf(":%d", 8080),
-			Handler: api.CORSMiddleware(mux),
+			Handler: api.CORSMiddleware(api.AuthMiddleware(authManager)(mux)),
 		}
 		go func() {
 			log.Printf("[HTTP] Dashboard + API: http://localhost:%d", 8080)

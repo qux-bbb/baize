@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	pb "github.com/qux-bbb/baize/proto/gen/go/baize/v1"
@@ -16,10 +17,71 @@ type Handler struct {
 	store   *store.Store
 	cmdBus  *engine.CommandBus
 	cfg     *engine.ConfigManager
+	auth    *AuthManager
 }
 
-func New(s *store.Store, cmdBus *engine.CommandBus, cfg *engine.ConfigManager) *Handler {
-	return &Handler{store: s, cmdBus: cmdBus, cfg: cfg}
+func New(s *store.Store, cmdBus *engine.CommandBus, cfg *engine.ConfigManager, auth *AuthManager) *Handler {
+	return &Handler{store: s, cmdBus: cmdBus, cfg: cfg, auth: auth}
+}
+
+// ── 登录 ──────────────────────────────────────────────────
+
+func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	if !h.auth.Verify(req.Username, req.Password) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "用户名或密码错误"})
+		return
+	}
+	mustChange := h.auth.MustChangePassword()
+	token := h.auth.IssueToken(req.Username, mustChange)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"token":                token,
+		"username":             req.Username,
+		"must_change_password": mustChange,
+	})
+}
+
+// ── 修改密码 ──────────────────────────────────────────────
+
+func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		OldPassword string `json:"old_password"`
+		NewPassword string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	if err := h.auth.ChangePassword(req.OldPassword, req.NewPassword); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	username := UsernameFromContext(r.Context())
+	token := h.auth.IssueToken(username, false)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"token":                token,
+		"username":             username,
+		"must_change_password": false,
+	})
+}
+
+// ── 退出登录 ──────────────────────────────────────────────
+
+func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
+	// 从 Authorization 头提取 token 并吊销
+	authHeader := r.Header.Get("Authorization")
+	if strings.HasPrefix(authHeader, "Bearer ") {
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		h.auth.RevokeToken(token)
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // ── 主机列表 ──────────────────────────────────────────────
@@ -195,7 +257,8 @@ func CORSMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Expose-Headers", "Content-Type")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(204)
 			return

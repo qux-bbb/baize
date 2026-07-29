@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react'
-
-const API = '/api'
+import { API, fetchJSON } from './api'
 
 interface Host {
   agent_id: string
@@ -24,6 +23,11 @@ const EVENT_LABELS: Record<string, string> = {
   yara: 'YARA 匹配',
 }
 
+interface EventTypesResp {
+  _global: Record<string, boolean>
+  per_agent?: Record<string, Record<string, boolean>>
+}
+
 export default function ConfigPage() {
   const [configs, setConfigs] = useState<Configs | null>(null)
   const [hosts, setHosts] = useState<Host[]>([])
@@ -39,9 +43,9 @@ export default function ConfigPage() {
   // 加载配置
   useEffect(() => {
     Promise.all([
-      fetch(`${API}/config/file-watch`).then(r => r.json()),
-      fetch(`${API}/hosts`).then(r => r.json()),
-      fetch(`${API}/config/event-types`).then(r => r.json()),
+      fetchJSON<Configs>(`${API}/config/file-watch`),
+      fetchJSON<{ hosts: Host[] }>(`${API}/hosts`),
+      fetchJSON<EventTypesResp>(`${API}/config/event-types`),
     ]).then(([cfg, hd, et]) => {
       setConfigs(cfg)
       setHosts(hd.hosts || [])
@@ -68,7 +72,7 @@ export default function ConfigPage() {
   // 选择主机时加载该主机的事件类型配置
   const selectEtHost = (aid: string) => {
     setEtHost(aid)
-    fetch(`${API}/config/event-types`).then(r => r.json()).then(et => {
+    fetchJSON<EventTypesResp>(`${API}/config/event-types`).then(et => {
       const cfg = aid ? (et.per_agent?.[aid]) : et._global
       const init: Record<string, boolean> = {}
       for (const t of EVENT_TYPES) {
@@ -81,15 +85,14 @@ export default function ConfigPage() {
   const save = async () => {
     const dirList = dirs.split(',').map(s => s.trim()).filter(Boolean)
     try {
-      const r = await fetch(`${API}/config/file-watch`, {
+      const d = await fetchJSON<{ status: string }>(`${API}/config/file-watch`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent_id: host || '', dirs: dirList }),
       })
-      const d = await r.json()
       if (d.status === 'ok') {
         setMsg('已保存，已推送到在线主机')
-        fetch(`${API}/config/file-watch`).then(r => r.json()).then(setConfigs)
+        fetchJSON<Configs>(`${API}/config/file-watch`).then(setConfigs)
       } else {
         setMsg('保存失败')
       }
@@ -99,12 +102,11 @@ export default function ConfigPage() {
   const saveEventTypes = async () => {
     if (!eventTypes) return
     try {
-      const r = await fetch(`${API}/config/event-types`, {
+      const d = await fetchJSON<{ status: string }>(`${API}/config/event-types`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent_id: etHost || '', categories: eventTypes }),
       })
-      const d = await r.json()
       if (d.status === 'ok') {
         setEtMsg('已保存，已推送到在线主机')
       } else {

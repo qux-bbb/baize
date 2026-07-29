@@ -1,5 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import ConfigPage from './ConfigPage'
+import LoginPage from './LoginPage'
+import ChangePasswordPage from './ChangePasswordPage'
+import ChangePasswordModal from './ChangePasswordModal'
+import { API, fetchJSON, initAuth, setAuth, clearAuth, isMustChangePassword } from './api'
 import './config.css'
 
 interface Host {
@@ -24,15 +28,9 @@ interface EventItem {
   summary: string; pid?: number; hostname: string
 }
 
-type Route = { page: 'hosts' } | { page: 'alerts' } | { page: 'events'; host?: string; q?: string } | { page: 'host-detail'; agentId: string } | { page: 'config' } | { page: 'config' }
+type Route = { page: 'hosts' } | { page: 'alerts' } | { page: 'events'; host?: string; q?: string } | { page: 'host-detail'; agentId: string } | { page: 'config' }
 
-const API = '/api'
-
-async function fetchJSON<T>(url: string): Promise<T> {
-  const r = await fetch(url)
-  if (!r.ok) throw new Error(`HTTP ${r.status}`)
-  return r.json()
-}
+// ── 工具 ──────────────────────────────────────────────
 
 function timeAgo(ts: string): string {
   const s = Math.floor((Date.now() - new Date(ts).getTime()) / 1000)
@@ -62,6 +60,15 @@ function parseHash(): Route {
 function navigate(hash: string) { location.hash = '#' + hash }
 
 export default function App() {
+  // ── 所有 Hooks 必须在顶部（不能放在条件返回之后） ─────
+
+  const [authState, setAuthState] = useState<{ token: string; username: string; mustChange: boolean } | null>(() => {
+    initAuth()
+    const t = localStorage.getItem('token')
+    if (t) return { token: t, username: localStorage.getItem('username') || '', mustChange: isMustChangePassword() }
+    return null
+  })
+
   const [route, setRoute] = useState<Route>(parseHash)
   const [hosts, setHosts] = useState<Host[]>([])
   const [alerts, setAlerts] = useState<Alert[]>([])
@@ -76,7 +83,23 @@ export default function App() {
   const [sysLoading, setSysLoading] = useState(false)
   const [searchQ, setSearchQ] = useState('')
   const [hostInput, setHostInput] = useState('')
+  const [showChangePwd, setShowChangePwd] = useState(false)
 
+  // 认证事件监听
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const evt = e as CustomEvent
+      if (evt.detail === 'logout') {
+        setAuthState(null)
+      } else if (evt.detail === 'must_change_password') {
+        setAuthState(prev => prev ? { ...prev, mustChange: true } : null)
+      }
+    }
+    window.addEventListener('baize-auth', handler)
+    return () => window.removeEventListener('baize-auth', handler)
+  }, [])
+
+  // hash 变更监听
   useEffect(() => {
     const onHash = () => { const r = parseHash(); setRoute(r); setSearchQ((r as any).q || ''); setHostInput((r as any).host || '') }
     onHash()
@@ -84,37 +107,56 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
 
-  const load = useCallback(async () => {
+  // 数据加载
+  const load = useCallback(async (overrideToken?: string) => {
     if (route.page === 'config') return
     setLoading(true); setErr('')
     try {
+      const auth = overrideToken || localStorage.getItem('token')
+      const opts = auth ? { headers: { 'Authorization': `Bearer ${auth}` } as Record<string, string> } : undefined
       if (route.page === 'hosts') {
-        const d = await fetchJSON<{ hosts: Host[] }>(`${API}/hosts`)
+        const d = await fetchJSON<{ hosts: Host[] }>(`${API}/hosts`, opts)
         setHosts(d.hosts)
       } else if (route.page === 'alerts') {
-        const d = await fetchJSON<{ alerts: Alert[] }>(`${API}/alerts`)
+        const d = await fetchJSON<{ alerts: Alert[] }>(`${API}/alerts`, opts)
         setAlerts(d.alerts)
       } else if (route.page === 'events') {
         let params = new URLSearchParams()
         if (route.host) params.set('hostname', route.host)
         if ((route as any).q) params.set('q', (route as any).q)
         const qs = params.toString()
-        const d = await fetchJSON<{ events: EventItem[] }>(`${API}/events${qs ? '?' + qs : ''}`)
+        const d = await fetchJSON<{ events: EventItem[] }>(`${API}/events${qs ? '?' + qs : ''}`, opts)
         setEvents(d.events)
-      } else if (route.page === 'host-detail') {
-        // 系统信息通过点击刷新获取，不由 load 自动加载
       }
-    } catch (e: any) { setErr(e.message) }
+    } catch (e: any) {
+      console.warn('[Baize] load error:', e.message, '| route:', route.page, '| auth:', !!localStorage.getItem('token'))
+      setErr(e.message)
+    }
     setLoading(false)
   }, [route.page, route.page === 'events' ? ((route as any).host + '|' + ((route as any).q || '')) : undefined,
     route.page === 'host-detail' ? (route as any).agentId : undefined])
 
-  // 初始加载时 fetch 一次主机列表，之后页面切换不重置
+  useEffect(() => { load() }, [load])
+
+  // 初始加载主机列表（authState 就绪时触发）
   useEffect(() => {
-    fetchJSON<{ hosts: Host[] }>(`${API}/hosts`).then(d => setHosts(d.hosts)).catch(() => {})
+    if (authState && !authState.mustChange) {
+      load(authState.token)
+    }
+  }, [authState, load])
+
+  const doLogout = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('token')
+      if (token) {
+        await fetch(`${API}/logout`, { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } })
+      }
+    } catch {}
+    clearAuth()
+    setAuthState(null)
+    location.hash = ''
   }, [])
 
-  // 加载系统信息（进程/网络）
   const loadSysInfo = useCallback(async () => {
     if (route.page !== 'host-detail') return
     setSysLoading(true)
@@ -122,13 +164,10 @@ export default function App() {
       const d = await fetchJSON<any>(`${API}/systeminfo?agent_id=${(route as any).agentId}`)
       setProcs(d.processes || [])
       setConns((d.tcp_connections || []).concat(d.udp_endpoints || []))
-    } catch (e: any) {
-      setErr(e.message)
-    }
+    } catch (e: any) { setErr(e.message) }
     setSysLoading(false)
   }, [route.page, (route as any).agentId])
 
-  // 搜索函数：读 DOM、更新 hash、调 API
   const doSearch = useCallback(async () => {
     const inputs = document.querySelectorAll('.filter-bar .input') as unknown as HTMLInputElement[]
     const hostVal = inputs[0]?.value || ''
@@ -144,8 +183,6 @@ export default function App() {
     } catch (e: any) { setErr(e.message) }
   }, [])
 
-  useEffect(() => { load() }, [load])
-
   async function showAlertDetail(alertID: string) {
     try {
       const d = await fetchJSON<AlertDetail>(`${API}/alert?alert_id=${alertID}`)
@@ -154,6 +191,43 @@ export default function App() {
   }
 
   const host = route.page === 'host-detail' ? hosts.find(h => h.agent_id === route.agentId) : null
+
+  // ── 判断当前应该渲染哪个页面 ──────────────────────────
+
+  // 未登录 → 登录页
+  if (!authState) {
+    return (
+      <LoginPage
+        onLogin={(token, username, mustChange) => {
+          setAuth(token, mustChange)
+          localStorage.setItem('username', username)
+          setAuthState({ token, username, mustChange })
+          navigate('hosts')
+        }}
+      />
+    )
+  }
+
+  // 已登录但需改密码
+  if (authState.mustChange) {
+    return (
+      <ChangePasswordPage
+        username={authState.username}
+        token={authState.token}
+        onPasswordChanged={(token) => {
+          setAuth(token, false)
+          setAuthState({ ...authState, token, mustChange: false })
+          navigate('hosts')
+        }}
+        onLogout={() => {
+          clearAuth()
+          setAuthState(null)
+        }}
+      />
+    )
+  }
+
+  // ── Dashboard ──────────────────────────────────────────
 
   return (
     <div className="app">
@@ -172,6 +246,8 @@ export default function App() {
               <button onClick={() => navigate('alerts')} className={route.page === 'alerts' ? 'active' : ''}>🚨 告警 ({alerts.length})</button>
               <button onClick={() => navigate('events')} className={route.page === 'events' ? 'active' : ''}>📋 事件</button>
               <button onClick={() => navigate('config')} className={route.page === 'config' ? 'active' : ''}>⚙ 配置</button>
+              <button onClick={() => setShowChangePwd(true)} className="change-pwd-btn">🔑 密码</button>
+              <button onClick={doLogout} className="logout-btn">退出</button>
             </div>
           )}
         </div>
@@ -411,6 +487,24 @@ export default function App() {
                 </tbody>
               </table>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 修改密码弹窗 */}
+      {showChangePwd && authState && (
+        <div className="overlay" onClick={() => setShowChangePwd(false)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{maxWidth:'420px'}}>
+            <ChangePasswordModal
+              token={authState.token}
+              onDone={(newToken) => {
+                setAuth(newToken, false)
+                setAuthState({ ...authState, token: newToken, mustChange: false })
+                setShowChangePwd(false)
+                navigate('hosts')
+              }}
+              onClose={() => setShowChangePwd(false)}
+            />
           </div>
         </div>
       )}

@@ -27,6 +27,10 @@ h1 { font-family: var(--font); font-size: 1.25rem; font-weight: 700; }
 }
 .tabs button:hover { border-color: var(--accent); color: var(--text); }
 .tabs button.active { background: rgba(34, 211, 238, 0.1); border-color: var(--accent); color: var(--accent); }
+.logout-btn { margin-left: 0.5rem; color: #94a3b8 !important; border-color: #334155 !important; }
+.logout-btn:hover { border-color: #fb7185 !important; color: #fb7185 !important; }
+.change-pwd-btn { color: #94a3b8 !important; border-color: #334155 !important; }
+.change-pwd-btn:hover { border-color: #fbbf24 !important; color: #fbbf24 !important; }
 
 /* Grid (hosts) */
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 1rem; }
@@ -124,3 +128,68 @@ h1 { font-family: var(--font); font-size: 1.25rem; font-weight: 700; }
 /* States */
 .loading, .empty, .error { padding: 2rem; text-align: center; color: var(--muted); font-size: 0.9rem; }
 .error { color: #fb7185; }
+
+/* Auth pages (login / change password) */
+.auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+.auth-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 2.5rem 2rem;
+  width: 100%;
+  max-width: 380px;
+  text-align: center;
+}
+.auth-logo {
+  font-size: 2.5rem;
+  color: var(--accent);
+  margin-bottom: 0.5rem;
+}
+.auth-title {
+  font-family: var(--font);
+  font-size: 1.3rem;
+  margin-bottom: 0.2rem;
+}
+.auth-subtitle {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 1.5rem;
+}
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.auth-form .input {
+  width: 100%;
+  max-width: none;
+}
+.auth-btn {
+  background: rgba(34, 211, 238, 0.15);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  padding: 0.6rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: var(--font);
+  font-size: 0.9rem;
+  transition: background .15s;
+  margin-top: 0.5rem;
+}
+.auth-btn:hover { background: rgba(34, 211, 238, 0.25); }
+.auth-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.auth-error {
+  color: #fb7185;
+  font-size: 0.8rem;
+  padding: 0.3rem 0;
+}
+.auth-footer {
+  margin-top: 1rem;
+  font-size: 0.8rem;
+}
