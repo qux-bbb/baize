@@ -1,5 +1,6 @@
 // 文件监控采集器 — 基于 notify crate
 // 监控敏感目录的文件创建/修改/删除事件
+// start: 创建 watcher 注册目录；stop: drop watcher 停止通知
 use anyhow::{Context, Result};
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::Path;
@@ -8,60 +9,91 @@ use tokio::sync::mpsc as tmpsc;
 
 use crate::pb;
 
-/// 启动文件监控
-/// `paths`: 要监控的目录列表
-/// `tx`: 事件发送通道
-pub async fn start(
-    paths: Vec<String>,
-    tx: tmpsc::Sender<pb::Event>,
-) -> Result<()> {
-    let (raw_tx, raw_rx) = mpsc::channel::<notify::Result<Event>>();
+pub struct FileCollector {
+    watcher: Option<RecommendedWatcher>,
+    worker: Option<std::thread::JoinHandle<()>>,
+    dirs: Vec<String>,
+}
 
-    // 创建 watcher
-    let mut watcher = RecommendedWatcher::new(
-        move |res| {
-            let _ = raw_tx.send(res);
-        },
-        Config::default(),
-    )
-    .context("创建文件监控器失败")?;
-
-    // 添加监控目录
-    for path in &paths {
-        watcher
-            .watch(Path::new(path), RecursiveMode::Recursive)
-            .with_context(|| format!("添加监控目录失败: {}", path))?;
-        tracing::info!("[FileMon] 监控: {}", path);
+impl FileCollector {
+    pub fn new() -> Self {
+        Self {
+            watcher: None,
+            worker: None,
+            dirs: Vec::new(),
+        }
     }
 
-    // 将 notify 事件转发到 tokio 通道
-    let tx_clone = tx.clone();
-    tokio::task::spawn_blocking(move || {
-        loop {
-            match raw_rx.recv() {
-                Ok(Ok(event)) => {
-                    if let Some(event_pb) = convert_event(event) {
-                        let _ = tx_clone.blocking_send(event_pb);
-                    }
-                }
-                Ok(Err(e)) => {
-                    tracing::error!("[FileMon] 通知错误: {:?}", e);
-                }
-                Err(_) => break,
-            }
+    /// 记录监控目录（不启动），供事件类型开关开启时使用
+    pub fn set_dirs(&mut self, dirs: Vec<String>) {
+        self.dirs = dirs;
+    }
+
+    pub fn dirs(&self) -> &[String] {
+        &self.dirs
+    }
+
+    /// 启动文件监控
+    pub fn start(&mut self, paths: Vec<String>, tx: tmpsc::Sender<pb::Event>) -> Result<()> {
+        if self.watcher.is_some() {
+            return Ok(()); // 已在运行
         }
-    });
 
-    // 保持 watcher 存活
-    // 使用 std::mem::forget 让 watcher 一直运行
-    // 或者返回 Ok，让 watcher 被 drop 但 spawn_blocking 中继续处理
-    // 实际上 watcher 在 drop 时会停止通知，所以需要让调用者持有它
-    // 这里我们使用一个 trick：把 watcher 泄漏掉
-    std::mem::forget(watcher);
+        let (raw_tx, raw_rx) = mpsc::channel::<notify::Result<Event>>();
 
-    // 阻塞以防止此任务退出
-    futures::future::pending::<()>().await;
-    Ok(())
+        // 创建 watcher
+        let mut watcher = RecommendedWatcher::new(
+            move |res| {
+                let _ = raw_tx.send(res);
+            },
+            Config::default(),
+        )
+        .context("创建文件监控器失败")?;
+
+        // 添加监控目录
+        for path in &paths {
+            watcher
+                .watch(Path::new(path), RecursiveMode::Recursive)
+                .with_context(|| format!("添加监控目录失败: {}", path))?;
+            tracing::info!("[FileMon] 监控: {}", path);
+        }
+
+        // 转发线程：notify 事件 → tokio 通道
+        // watcher 被 drop 时 raw_tx 关闭，recv 返回 Err，线程退出
+        let tx_clone = tx.clone();
+        let worker = std::thread::spawn(move || {
+            while let Ok(Ok(event)) = raw_rx.recv() {
+                if let Some(event_pb) = convert_event(event) {
+                    let _ = tx_clone.blocking_send(event_pb);
+                }
+            }
+            tracing::info!("[FileMon] 转发线程退出");
+        });
+
+        self.watcher = Some(watcher);
+        self.worker = Some(worker);
+        tracing::info!("[FileMon] 采集器已启动 ({} 个目录)", paths.len());
+        Ok(())
+    }
+
+    /// 停止文件监控
+    pub fn stop(&mut self) {
+        if self.watcher.is_none() {
+            return;
+        }
+        // drop watcher → raw_tx 关闭 → 转发线程 recv Err 退出
+        self.watcher.take();
+        if let Some(w) = self.worker.take() {
+            let _ = w.join();
+        }
+        tracing::info!("[FileMon] 采集器已停止");
+    }
+}
+
+impl Default for FileCollector {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// 将 notify::Event 转为 protobuf Event

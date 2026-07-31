@@ -10,7 +10,6 @@ pub mod pb {
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::RwLock;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -187,38 +186,19 @@ async fn run(
         }
     });
 
-    // 进程事件由 EvtSubscribe 实时采集（见 wmi_process.rs），旧 EventLog 轮询已禁用
-    #[cfg(target_os = "windows")]
-    {
-        let wmi_tx = tx.clone();
-        std::thread::spawn(move || {
-            if let Err(e) = collector::wmi_process::start_evtsub(wmi_tx) {
-                tracing::error!("EventLog 监控错误: {:?}", e);
-            }
-        });
-    }
+    // 进程事件由独立采集器实时采集（EvtSubscribe），由 Server 配置控制启停
 
-    // 文件监控由 Server 通过 ConfigureFileWatchCommand 指令控制
-    // Agent 不再默认启动文件监控，等待服务端下配置
+    // 采集器管理器：持有各事件类型的采集器实例，随 Server 指令启停
+    let collectors = Arc::new(CollectorManager::new());
 
-    // 事件类型开关（默认全部关闭，等待 Server 下发配置）
-    let enabled_events: Arc<RwLock<HashMap<String, bool>>> = Arc::new(RwLock::new(HashMap::new()));
-
-    // 转发线程：rx → 过滤 → AgentInfo + seq → gRPC 流
+    // 转发线程：rx → AgentInfo + seq → gRPC 流
+    // （不再过滤事件类型 — 采集器关闭后根本不会产生对应事件）
     let (request_tx, request_rx) = mpsc::channel::<Event>(1024);
     let agent_info_clone = agent_info.clone();
-    let ee = Arc::clone(&enabled_events);
 
     tokio::spawn(async move {
         let mut seq: u64 = 0;
         while let Some(mut event) = rx.recv().await {
-            // 过滤禁用的事件类型
-            if let Some(cat) = get_event_category(&event) {
-                let enabled = ee.read().unwrap();
-                if enabled.get(cat) == Some(&false) {
-                    continue; // 已禁用，丢弃
-                }
-            }
             seq += 1;
             event.agent_info = Some(agent_info_clone.clone());
             event.sequence_id = seq;
@@ -268,13 +248,20 @@ async fn run(
                 CommandType::ConfigureFileWatch(fw_cmd) => {
                     info!("[配置] 文件监控目录: {:?}", fw_cmd.watch_dirs);
                     let dirs: Vec<String> = fw_cmd.watch_dirs.clone();
-                    if !dirs.is_empty() {
-                        let file_tx = tx.clone();
-                        tokio::spawn(async move {
-                            if let Err(e) = collector::file::start(dirs, file_tx).await {
-                                error!("文件监控错误: {:?}", e);
-                            }
-                        });
+                    // 记录目录（短持有锁）
+                    {
+                        let mut fc = collectors.file.lock().unwrap();
+                        fc.set_dirs(dirs.clone());
+                    }
+                    // 事件类型 file 开关开启时才启动
+                    if dirs.is_empty() {
+                        collectors.file.lock().unwrap().stop();
+                    } else if event_type_enabled(&collectors, "file") {
+                        if let Err(e) = collectors.file.lock().unwrap().start(dirs, tx.clone()) {
+                            error!("文件监控启动失败: {:?}", e);
+                        }
+                    } else {
+                        info!("[配置] file 开关未开启，仅记录目录，等待开启后启动");
                     }
                     Ok(String::new())
                 }
@@ -283,9 +270,8 @@ async fn run(
                 }
                 CommandType::ConfigureEventTypes(et_cmd) => {
                     info!("[配置] 事件类型开关: {:?}", et_cmd.categories);
-                    let mut enabled = enabled_events.write().unwrap();
                     for (k, v) in &et_cmd.categories {
-                        enabled.insert(k.clone(), *v);
+                        apply_event_type(&collectors, k, *v, &tx);
                     }
                     Ok(String::new())
                 }
@@ -315,17 +301,115 @@ async fn run(
 
 // ── 辅助函数 ──────────────────────────────────────────
 
-/// 获取事件对应的配置类别
-fn get_event_category(event: &pb::Event) -> Option<&'static str> {
-    match event.event_type.as_ref()? {
-        pb::event::EventType::ProcessCreate(_) | pb::event::EventType::ProcessTerminate(_) => Some("process"),
-        pb::event::EventType::FileCreate(_) | pb::event::EventType::FileModify(_) | pb::event::EventType::FileDelete(_) => Some("file"),
-        pb::event::EventType::NetworkConnection(_) => Some("network"),
-        pb::event::EventType::DnsQuery(_) => Some("dns"),
-        pb::event::EventType::RegistryChange(_) => Some("registry"),
-        pb::event::EventType::ScheduledTask(_) => Some("task"),
-        pb::event::EventType::YaraMatch(_) => Some("yara"),
+/// 采集器管理器 — 持有各事件类型的采集器实例
+/// 事件类型开关由 Server 通过 ConfigureEventTypesCommand 控制，
+/// 关闭时停止对应采集器（EvtClose + 释放审计策略），不再本地采集。
+struct CollectorManager {
+    #[cfg(target_os = "windows")]
+    process: std::sync::Mutex<collector::process_collector::ProcessCollector>,
+    #[cfg(target_os = "windows")]
+    network: std::sync::Mutex<collector::network_collector::NetworkCollector>,
+    #[cfg(target_os = "windows")]
+    dns: std::sync::Mutex<collector::dns_collector::DnsCollector>,
+    file: std::sync::Mutex<collector::file::FileCollector>,
+    /// 事件类型开关状态（Server 下发的最新值）
+    states: std::sync::Mutex<HashMap<String, bool>>,
+}
+
+impl CollectorManager {
+    fn new() -> Self {
+        #[cfg(target_os = "windows")]
+        {
+            let policies = Arc::new(collector::audit_policy::AuditPolicyManager::new());
+            Self {
+                process: std::sync::Mutex::new(collector::process_collector::ProcessCollector::new(Arc::clone(&policies))),
+                network: std::sync::Mutex::new(collector::network_collector::NetworkCollector::new(Arc::clone(&policies))),
+                dns: std::sync::Mutex::new(collector::dns_collector::DnsCollector::new(Arc::clone(&policies))),
+                file: std::sync::Mutex::new(collector::file::FileCollector::new()),
+                states: std::sync::Mutex::new(HashMap::new()),
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            Self {
+                file: std::sync::Mutex::new(collector::file::FileCollector::new()),
+                states: std::sync::Mutex::new(HashMap::new()),
+            }
+        }
     }
+}
+
+/// 应用单个事件类型的开关配置：true 启动采集器，false 停止
+fn apply_event_type(collectors: &CollectorManager, category: &str, enabled: bool, tx: &mpsc::Sender<pb::Event>) {
+    collectors.states.lock().unwrap().insert(category.to_string(), enabled);
+
+    match category {
+        #[cfg(target_os = "windows")]
+        "process" => {
+            let mut c = collectors.process.lock().unwrap();
+            if enabled {
+                if let Err(e) = c.start(tx.clone()) {
+                    error!("process 采集器启动失败: {:?}", e);
+                }
+            } else if let Err(e) = c.stop() {
+                error!("process 采集器停止失败: {:?}", e);
+            }
+        }
+        #[cfg(target_os = "windows")]
+        "network" => {
+            let mut c = collectors.network.lock().unwrap();
+            if enabled {
+                if let Err(e) = c.start(tx.clone()) {
+                    error!("network 采集器启动失败: {:?}", e);
+                }
+            } else if let Err(e) = c.stop() {
+                error!("network 采集器停止失败: {:?}", e);
+            }
+        }
+        #[cfg(target_os = "windows")]
+        "dns" => {
+            let mut c = collectors.dns.lock().unwrap();
+            if enabled {
+                if let Err(e) = c.start(tx.clone()) {
+                    error!("dns 采集器启动失败: {:?}", e);
+                }
+            } else if let Err(e) = c.stop() {
+                error!("dns 采集器停止失败: {:?}", e);
+            }
+        }
+        "file" => {
+            let mut c = collectors.file.lock().unwrap();
+            if enabled {
+                let dirs = c.dirs().to_vec();
+                if dirs.is_empty() {
+                    info!("[配置] file 已开启但尚未收到监控目录，等待 ConfigureFileWatch");
+                } else if let Err(e) = c.start(dirs, tx.clone()) {
+                    error!("file 采集器启动失败: {:?}", e);
+                }
+            } else {
+                c.stop();
+            }
+        }
+        "registry" | "task" | "yara" => {
+            if enabled {
+                info!("[配置] 事件类型 {} 尚未实现，忽略", category);
+            }
+        }
+        _ => {
+            info!("[配置] 未知事件类型: {}", category);
+        }
+    }
+}
+
+/// 查询某事件类型的开关状态
+fn event_type_enabled(collectors: &CollectorManager, category: &str) -> bool {
+    collectors
+        .states
+        .lock()
+        .unwrap()
+        .get(category)
+        .copied()
+        .unwrap_or(false)
 }
 
 // ── Agent ID 持久化 ─────────────────────────────────────
