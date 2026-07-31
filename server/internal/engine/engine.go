@@ -6,7 +6,6 @@ import (
 	"log"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -82,7 +81,7 @@ func (e *Engine) EvalAndAlert(eventFields map[string]string, rawEventJSON string
 
 	for _, rule := range matches {
 		alert := map[string]interface{}{
-			"@timestamp":    time.Now().UTC().Format(time.RFC3339Nano),
+			"@timestamp":     eventFields["@timestamp"],
 			"alert_id":      uuid.New().String(),
 			"rule_name":     rule.Title,
 			"rule_id":       rule.ID,

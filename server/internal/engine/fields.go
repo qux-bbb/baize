@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	pb "github.com/qux-bbb/baize/proto/gen/go/baize/v1"
+	"github.com/qux-bbb/baize/server/internal/store"
 )
 
 // EventToFieldMap 将 Protobuf Event 转为扁平字段映射
@@ -21,6 +22,7 @@ func EventToFieldMap(event *pb.Event) map[string]string {
 	// 事件类型和分类
 	m["event_type"] = getEVType(event)
 	m["event_category"] = getEVCategory(event)
+	m["@timestamp"] = store.EventTime(event)
 
 	// 事件特有字段
 	switch e := event.GetEventType().(type) {

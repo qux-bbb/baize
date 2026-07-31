@@ -321,8 +321,37 @@ func (s *Store) GetAlert(alertID string) (map[string]interface{}, error) {
 
 // ── 文档转换 ──────────────────────────────────────────────
 
+// EventTime 返回事件发生时间 (RFC3339Nano, UTC)。
+// 直接取 Agent 上报的 timestamp_ns，不回退服务端时间。
+func EventTime(event *pb.Event) string {
+	var ts uint64
+	switch e := event.GetEventType().(type) {
+	case *pb.Event_ProcessCreate:
+		ts = e.ProcessCreate.GetTimestampNs()
+	case *pb.Event_ProcessTerminate:
+		ts = e.ProcessTerminate.GetTimestampNs()
+	case *pb.Event_FileCreate:
+		ts = e.FileCreate.GetTimestampNs()
+	case *pb.Event_FileModify:
+		ts = e.FileModify.GetTimestampNs()
+	case *pb.Event_FileDelete:
+		ts = e.FileDelete.GetTimestampNs()
+	case *pb.Event_NetworkConnection:
+		ts = e.NetworkConnection.GetTimestampNs()
+	case *pb.Event_RegistryChange:
+		ts = e.RegistryChange.GetTimestampNs()
+	case *pb.Event_ScheduledTask:
+		ts = e.ScheduledTask.GetTimestampNs()
+	case *pb.Event_YaraMatch:
+		ts = e.YaraMatch.GetTimestampNs()
+	case *pb.Event_DnsQuery:
+		ts = e.DnsQuery.GetTimestampNs()
+	}
+	return time.Unix(0, int64(ts)).UTC().Format(time.RFC3339Nano)
+}
+
 func eventToDoc(event *pb.Event) EventDoc {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := EventTime(event)
 	doc := EventDoc{
 		Timestamp:    now,
 		AgentID:      event.GetAgentInfo().GetAgentId(),

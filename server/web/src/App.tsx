@@ -32,12 +32,11 @@ type Route = { page: 'hosts' } | { page: 'alerts' } | { page: 'events'; host?: s
 
 // ── 工具 ──────────────────────────────────────────────
 
-function timeAgo(ts: string): string {
-  const s = Math.floor((Date.now() - new Date(ts).getTime()) / 1000)
-  if (s < 60) return '刚刚'
-  if (s < 3600) return `${Math.floor(s / 60)}分钟前`
-  if (s < 86400) return `${Math.floor(s / 3600)}小时前`
-  return `${Math.floor(s / 86400)}天前`
+function formatTime(ts: string): string {
+  const d = new Date(ts)
+  if (isNaN(d.getTime())) return ts || ''
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
 
 const SEV: Record<string, string> = {
@@ -271,7 +270,7 @@ export default function App() {
                     <div className="row"><span className="label">IP</span><span className="mono">{h.ips.join(', ')}</span></div>
                   )}
                   <div className="row"><span className="label">ID</span><span className="mono" style={{fontSize:'0.65rem'}}>{h.agent_id.slice(0,19)}...</span></div>
-                  <div className="ago" style={{marginTop:'0.3rem'}}>最后活跃: {timeAgo(h.last_seen)}</div>
+                  <div className="ago" style={{marginTop:'0.3rem'}}>最后活跃: {formatTime(h.last_seen)}</div>
                 </div>
               </div>
             ))}
@@ -366,7 +365,7 @@ export default function App() {
                   <td>{a.rule_name}</td>
                   <td>{a.hostname}</td>
                   <td className="mono">{a.event_type}</td>
-                  <td className="ago">{timeAgo(a['@timestamp'])}</td>
+                  <td className="ago">{formatTime(a['@timestamp'])}</td>
                 </tr>
               ))}
               {alerts.length === 0 && <tr><td colSpan={5} className="empty">暂无告警</td></tr>}
@@ -400,7 +399,7 @@ export default function App() {
               <tbody>
                 {events.map((e, i) => (
                   <tr key={i}>
-                    <td className="ago">{timeAgo(e['@timestamp'])}</td>
+                    <td className="ago">{formatTime(e['@timestamp'])}</td>
                     <td>{e.hostname}</td>
                     <td className="mono">{e.event_type}{e.event_action ? '/' + e.event_action : ''}</td>
                     <td className="summary">{e.summary}</td>
