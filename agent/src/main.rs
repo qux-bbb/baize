@@ -113,15 +113,29 @@ async fn main() -> Result<()> {
 
     info!("Agent {} ({}) 启动中...", agent_id, hostname);
 
+    // 采集主机信息：OS 版本 / 内核版本 / 启动时间 / 网卡 IP（sysinfo 跨平台，0.33 为关联函数）
+    let os_version = sysinfo::System::os_version().unwrap_or_default();
+    let kernel_version = sysinfo::System::kernel_version().unwrap_or_default();
+    let boot_time_ns = sysinfo::System::boot_time().saturating_mul(1_000_000_000);
+    let net = sysinfo::Networks::new_with_refreshed_list();
+    let mut ips: Vec<String> = Vec::new();
+    for data in net.list().values() {
+        for ip in data.ip_networks() {
+            if ip.addr.is_ipv4() && !ip.addr.is_loopback() && !ips.contains(&ip.addr.to_string()) {
+                ips.push(ip.addr.to_string());
+            }
+        }
+    }
+
     let agent_info = AgentInfo {
         agent_id,
         hostname,
         os_type: std::env::consts::OS.to_string(),
-        os_version: std::env::consts::ARCH.to_string(),
-        kernel_version: String::new(),
+        os_version,
+        kernel_version,
         agent_version: env!("CARGO_PKG_VERSION").to_string(),
-        ip_addresses: vec![],
-        boot_time_ns: 0,
+        ip_addresses: ips,
+        boot_time_ns,
         arch: std::env::consts::ARCH.to_string(),
     };
 
@@ -225,6 +239,21 @@ async fn run(
     info!("双向流已建立，等待 Server 指令...");
 
     let mut incoming = response.into_inner();
+
+    // 心跳循环：每 30 秒上报 AgentInfo（注册 / 保活，独立于事件流）
+    {
+        let mut hb_client = client.clone();
+        let hb_info = agent_info.clone();
+        tokio::spawn(async move {
+            loop {
+                time::sleep(Duration::from_secs(30)).await;
+                match hb_client.heartbeat(Request::new(hb_info.clone())).await {
+                    Ok(_) => {}
+                    Err(e) => error!("心跳上报失败: {:?}", e),
+                }
+            }
+        });
+    }
 
     while let Some(cmd) = incoming.message().await? {
         info!("收到指令: {:?}", cmd);

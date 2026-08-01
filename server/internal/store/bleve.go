@@ -3,14 +3,19 @@
 package store
 
 import (
+	"encoding/binary"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/blevesearch/bleve/v2"
+	index "github.com/blevesearch/bleve_index_api"
 
 	pb "github.com/qux-bbb/baize/proto/gen/go/baize/v1"
 )
@@ -18,11 +23,27 @@ import (
 const (
 	eventType = "event"
 	alertType = "alert"
+	hostType  = "host"
 )
+
+// hostUpdateInterval 事件流更新 host 文档的节流间隔（避免事件密集时写放大）
+const hostUpdateInterval = 10 * time.Second
 
 // Store 封装 Bleve 索引
 type Store struct {
 	index bleve.Index
+
+	// 主机实体状态（内存态，重启后由 RebuildHosts 填充）
+	hostMu       sync.Mutex
+	hostStates   map[string]*hostState
+	hostThrottle map[string]time.Time
+}
+
+// hostState 内存中的主机状态（写文档时落盘）
+type hostState struct {
+	firstSeen string
+	lastSeen  string
+	count     uint64 // 已见过的事件最大 seq（= 事件数）
 }
 
 // EventDoc 事件文档（写入 Bleve 的结构）
@@ -139,7 +160,11 @@ func New(path string) (*Store, error) {
 		log.Printf("[Bleve] 索引 %s 已创建", path)
 	}
 
-	return &Store{index: index}, nil
+	return &Store{
+		index:        index,
+		hostStates:   make(map[string]*hostState),
+		hostThrottle: make(map[string]time.Time),
+	}, nil
 }
 
 // Close 关闭索引
@@ -171,9 +196,206 @@ func (s *Store) WriteAlert(alert map[string]interface{}) error {
 	return s.index.Index(id, doc)
 }
 
+// ── 主机实体 ──────────────────────────────────────────────
+// 主机是独立实体（type:host 文档），由 心跳 RPC / 事件流 两条路径维护，
+// 主机列表直接查询主机文档，不再从事件聚合。
+
+// HostDoc 主机文档（写入 Bleve 的结构，docID = host-<agent_id>，同 id 覆盖 = upsert）
+type HostDoc struct {
+	Type         string   `json:"type"`
+	AgentID      string   `json:"agent_id"`
+	Hostname     string   `json:"hostname"`
+	OSType       string   `json:"os_type"`
+	OSVersion    string   `json:"os_version"`
+	AgentVersion string   `json:"agent_version"`
+	Arch         string   `json:"arch"`
+	IPAddresses  []string `json:"ip_addresses"`
+	FirstSeen    string   `json:"first_seen"`
+	LastSeen     string   `json:"last_seen"`
+	EventCount   uint64   `json:"event_count"`
+}
+
+// WriteHost 注册/心跳：写入（upsert）主机文档
+// 调用方：Heartbeat RPC（低频，30s/次），不走节流
+func (s *Store) WriteHost(info *pb.AgentInfo, lastSeen string) error {
+	if info == nil || info.GetAgentId() == "" {
+		return nil
+	}
+	agentID := info.GetAgentId()
+
+	s.hostMu.Lock()
+	defer s.hostMu.Unlock()
+
+	st := s.hostStates[agentID]
+	if st == nil {
+		st = &hostState{firstSeen: lastSeen}
+		s.hostStates[agentID] = st
+	}
+	st.lastSeen = lastSeen
+	s.hostThrottle[agentID] = time.Now()
+
+	doc := &HostDoc{
+		Type:         hostType,
+		AgentID:      agentID,
+		Hostname:     info.GetHostname(),
+		OSType:       info.GetOsType(),
+		OSVersion:    info.GetOsVersion(),
+		AgentVersion: info.GetAgentVersion(),
+		Arch:         info.GetArch(),
+		IPAddresses:  info.GetIpAddresses(),
+		FirstSeen:    st.firstSeen,
+		LastSeen:     st.lastSeen,
+		EventCount:   st.count,
+	}
+	return s.index.Index("host-"+agentID, doc)
+}
+
+// UpsertHostFromEvent 事件写入时的伴随更新（节流 10s，避免写放大）
+// 首次见到该 agent 时立即注册，之后按 hostUpdateInterval 节流合并
+func (s *Store) UpsertHostFromEvent(event *pb.Event) error {
+	info := event.GetAgentInfo()
+	if info == nil || info.GetAgentId() == "" {
+		return nil
+	}
+	agentID := info.GetAgentId()
+	seq := event.GetSequenceId()
+	ts := EventTime(event)
+
+	s.hostMu.Lock()
+	defer s.hostMu.Unlock()
+
+	st := s.hostStates[agentID]
+	if st == nil {
+		// 首次：尝试从索引恢复状态（重启后 RebuildHosts 完成前的窗口）
+		st = s.getHostStateFromIndex(agentID)
+		if st == nil {
+			st = &hostState{firstSeen: ts}
+		}
+		s.hostStates[agentID] = st
+	}
+	if seq > st.count {
+		st.count = seq
+	}
+	st.lastSeen = ts
+
+	// 节流：间隔内只更新内存，不写索引
+	if last, ok := s.hostThrottle[agentID]; ok && time.Since(last) < hostUpdateInterval {
+		return nil
+	}
+
+	s.hostThrottle[agentID] = time.Now()
+	doc := &HostDoc{
+		Type:         hostType,
+		AgentID:      agentID,
+		Hostname:     info.GetHostname(),
+		OSType:       info.GetOsType(),
+		OSVersion:    info.GetOsVersion(),
+		AgentVersion: info.GetAgentVersion(),
+		Arch:         info.GetArch(),
+		IPAddresses:  info.GetIpAddresses(),
+		FirstSeen:    st.firstSeen,
+		LastSeen:     st.lastSeen,
+		EventCount:   st.count,
+	}
+	return s.index.Index("host-"+agentID, doc)
+}
+
+// getHostStateFromIndex 从索引读取主机文档状态（仅用于重启后的恢复窗口）
+func (s *Store) getHostStateFromIndex(agentID string) *hostState {
+	doc, err := s.index.Document("host-" + agentID)
+	if err != nil || doc == nil {
+		return nil
+	}
+	st := &hostState{}
+	doc.VisitFields(func(f index.Field) {
+		switch f.Name() {
+		case "first_seen":
+			st.firstSeen = string(f.Value())
+		case "last_seen":
+			st.lastSeen = string(f.Value())
+		case "event_count":
+			// bleve 数字字段存储为 8 字节大端 float64
+			if v := f.Value(); len(v) == 8 {
+				bits := binary.BigEndian.Uint64(v)
+				st.count = uint64(math.Float64frombits(bits))
+			} else if n, err := strconv.ParseUint(strings.TrimSpace(string(v)), 10, 64); err == nil {
+				st.count = n
+			}
+		}
+	})
+	return st
+}
+
+// RebuildHosts 从事件索引重建所有主机文档（Server 启动时后台执行一次，幂等）
+// 用 facet 按 agent_id 分组拿精确事件数，再对每个 agent 查最新事件取静态字段
+func (s *Store) RebuildHosts() (int, error) {
+	// 1. facet 分组拿精确事件数（无 size 截断问题）
+	q := bleve.NewQueryStringQuery("type:event")
+	search := bleve.NewSearchRequest(q)
+	search.Size = 0
+	facet := bleve.NewFacetRequest("agent_id", 10000)
+	search.AddFacet("hosts", facet)
+
+	result, err := s.index.Search(search)
+	if err != nil {
+		return 0, err
+	}
+	f, ok := result.Facets["hosts"]
+	if !ok {
+		return 0, nil
+	}
+
+	terms := f.Terms.Terms()
+	for _, t := range terms {
+		agentID := t.Term
+		// 2. 查该 agent 的最新一条事件（静态字段 + last_seen）
+		q2 := bleve.NewQueryStringQuery(fmt.Sprintf(`type:event AND agent_id:"%s"`, agentID))
+		s2 := bleve.NewSearchRequest(q2)
+		s2.Size = 1
+		s2.SortBy([]string{"-@timestamp"})
+		s2.Fields = []string{"agent_id", "hostname", "os_type", "os_version", "agent_version", "arch", "@timestamp"}
+		r2, err := s.index.Search(s2)
+		if err != nil || len(r2.Hits) == 0 {
+			continue
+		}
+		hit := r2.Hits[0]
+		lastSeen := getFieldStr(hit.Fields, "@timestamp")
+
+		s.hostMu.Lock()
+		st := s.hostStates[agentID]
+		if st == nil {
+			st = &hostState{firstSeen: lastSeen}
+			s.hostStates[agentID] = st
+		}
+		st.lastSeen = lastSeen
+		if uint64(t.Count) > st.count {
+			st.count = uint64(t.Count)
+		}
+		s.hostThrottle[agentID] = time.Now()
+		doc := &HostDoc{
+			Type:         hostType,
+			AgentID:      agentID,
+			Hostname:     getFieldStr(hit.Fields, "hostname"),
+			OSType:       getFieldStr(hit.Fields, "os_type"),
+			OSVersion:    getFieldStr(hit.Fields, "os_version"),
+			AgentVersion: getFieldStr(hit.Fields, "agent_version"),
+			Arch:         getFieldStr(hit.Fields, "arch"),
+			FirstSeen:    st.firstSeen,
+			LastSeen:     st.lastSeen,
+			EventCount:   st.count,
+		}
+		err = s.index.Index("host-"+agentID, doc)
+		s.hostMu.Unlock()
+		if err != nil {
+			return 0, err
+		}
+	}
+	return len(terms), nil
+}
+
 // ── 查询方法 ──────────────────────────────────────────────
 
-// SearchHosts 查询所有主机
+// SearchHosts 查询所有主机（查独立的主机文档 type:host，毫秒级）
 func (s *Store) SearchHosts(onlineIDs ...[]string) ([]HostResult, error) {
 	online := make(map[string]bool)
 	if len(onlineIDs) > 0 {
@@ -181,46 +403,35 @@ func (s *Store) SearchHosts(onlineIDs ...[]string) ([]HostResult, error) {
 			online[id] = true
 		}
 	}
-	// 查询全部事件，获取所有 agent_id
-	q := bleve.NewQueryStringQuery(`type:event`)
+
+	q := bleve.NewQueryStringQuery(`type:host`)
 	search := bleve.NewSearchRequest(q)
 	search.Size = 10000
-	search.Fields = []string{"agent_id", "hostname", "os_type", "os_version", "agent_version", "arch", "ip_addresses", "@timestamp"}
+	search.Fields = []string{"agent_id", "hostname", "os_type", "os_version", "agent_version", "arch", "ip_addresses", "first_seen", "last_seen", "event_count"}
 
 	result, err := s.index.Search(search)
 	if err != nil {
 		return nil, err
 	}
 
-	// 按 agent_id 分组
-	hostMap := make(map[string]*HostResult)
-	hostOrder := []string{}
-
+	hosts := make([]HostResult, 0, len(result.Hits))
 	for _, hit := range result.Hits {
 		agentID := getFieldStr(hit.Fields, "agent_id")
-
-		existing, ok := hostMap[agentID]
-		if !ok {
-			existing = &HostResult{
-				AgentID:  agentID,
-				Hostname: getFieldStr(hit.Fields, "hostname"),
-				IsOnline: online[agentID],
-			}
-			hostMap[agentID] = existing
-			hostOrder = append(hostOrder, agentID)
+		if agentID == "" {
+			continue
 		}
-
-		existing.EventCount++
-		existing.LastSeen = getFieldStr(hit.Fields, "@timestamp")
-		existing.OSType = getFieldStr(hit.Fields, "os_type")
-		existing.OSVersion = getFieldStr(hit.Fields, "os_version")
-		existing.AgentVersion = getFieldStr(hit.Fields, "agent_version")
-		existing.Arch = getFieldStr(hit.Fields, "arch")
-	}
-
-	var hosts []HostResult
-	for _, id := range hostOrder {
-		hosts = append(hosts, *hostMap[id])
+		hosts = append(hosts, HostResult{
+			AgentID:      agentID,
+			Hostname:     getFieldStr(hit.Fields, "hostname"),
+			IsOnline:     online[agentID],
+			EventCount:   int(getFieldUint(hit.Fields, "event_count")),
+			LastSeen:     getFieldStr(hit.Fields, "last_seen"),
+			OSType:       getFieldStr(hit.Fields, "os_type"),
+			OSVersion:    getFieldStr(hit.Fields, "os_version"),
+			AgentVersion: getFieldStr(hit.Fields, "agent_version"),
+			Arch:         getFieldStr(hit.Fields, "arch"),
+			Ips:          getFieldStrs(hit.Fields, "ip_addresses"),
+		})
 	}
 	return hosts, nil
 }
@@ -514,15 +725,16 @@ func min(a, b int) int {
 }
 
 type HostResult struct {
-	AgentID    string `json:"agent_id"`
-	Hostname   string `json:"hostname"`
-	EventCount int    `json:"event_count"`
-	LastSeen   string `json:"last_seen"`
-	IsOnline   bool   `json:"is_online"`
-	OSType      string `json:"os_type"`
-	OSVersion   string `json:"os_version"`
-	AgentVersion string `json:"agent_version"`
-	Arch        string `json:"arch"`
+	AgentID      string   `json:"agent_id"`
+	Hostname     string   `json:"hostname"`
+	EventCount   int      `json:"event_count"`
+	LastSeen     string   `json:"last_seen"`
+	IsOnline     bool     `json:"is_online"`
+	OSType       string   `json:"os_type"`
+	OSVersion    string   `json:"os_version"`
+	AgentVersion string   `json:"agent_version"`
+	Arch         string   `json:"arch"`
+	Ips          []string `json:"ips,omitempty"`
 }
 
 type AlertResult struct {
@@ -563,6 +775,29 @@ func getFieldUint(fields map[string]interface{}, key string) uint64 {
 		}
 	}
 	return 0
+}
+
+// getFieldStrs 读取数组字段（如 ip_addresses）
+func getFieldStrs(fields map[string]interface{}, key string) []string {
+	v, ok := fields[key]
+	if !ok {
+		return nil
+	}
+	switch arr := v.(type) {
+	case []interface{}:
+		var out []string
+		for _, item := range arr {
+			if s, ok := item.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case string:
+		if arr != "" {
+			return []string{arr}
+		}
+	}
+	return nil
 }
 
 func buildSummary(fields map[string]interface{}) string {

@@ -120,6 +120,10 @@ func processEvent(event *pb.Event, es *store.Store, eng *engine.Engine) {
 		if err := es.WriteEvent(event); err != nil {
 			log.Printf("[ES] 写入失败: %v", err)
 		}
+		// 1b. 伴随更新主机实体（节流 10s）
+		if err := es.UpsertHostFromEvent(event); err != nil {
+			log.Printf("[Host] 主机文档更新失败: %v", err)
+		}
 	}
 
 	// 2. 检测引擎
@@ -169,6 +173,13 @@ func printEvent(event *pb.Event, agentID, hostname string, seq uint64) {
 func (s *baizeServer) Heartbeat(ctx context.Context, info *pb.AgentInfo) (*pb.Empty, error) {
 	log.Printf("[Heartbeat] Agent=%s (%s) OS=%s v%s",
 		info.GetAgentId(), info.GetHostname(), info.GetOsType(), info.GetOsVersion())
+	// 注册/心跳：写入（upsert）主机实体文档
+	if s.es != nil {
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		if err := s.es.WriteHost(info, now); err != nil {
+			log.Printf("[Heartbeat] 主机文档写入失败: %v", err)
+		}
+	}
 	return &pb.Empty{}, nil
 }
 
@@ -247,6 +258,18 @@ func main() {
 
 	// 初始化检测引擎
 	eng := initEngine(bleveStore)
+
+	// 后台重建主机实体（从事件索引恢复存量主机，幂等）
+	if bleveStore != nil {
+		go func() {
+			n, err := bleveStore.RebuildHosts()
+			if err != nil {
+				log.Printf("[Host] 主机重建失败: %v", err)
+			} else {
+				log.Printf("[Host] 主机重建完成: %d 台", n)
+			}
+		}()
+	}
 
 	// 初始化认证
 	authPath := filepath.Join(".", "data", "auth.json")
