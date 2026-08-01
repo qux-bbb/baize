@@ -74,6 +74,8 @@ h1 { font-family: var(--font); font-size: 1.25rem; font-weight: 700; }
   padding: 0.4rem 1rem; border-radius: 6px; cursor: pointer; font-family: var(--font); font-size: 0.8rem;
 }
 .btn:hover { background: rgba(34, 211, 238, 0.2); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn:disabled:hover { background: rgba(34, 211, 238, 0.1); }
 .clickable { cursor: pointer; }
 .action { text-align: center; }
 .scroll-table { max-height: 400px; overflow-y: auto; display: block; }

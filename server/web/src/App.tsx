@@ -83,6 +83,8 @@ export default function App() {
   const [searchQ, setSearchQ] = useState('')
   const [hostInput, setHostInput] = useState('')
   const [showChangePwd, setShowChangePwd] = useState(false)
+  const [exportConfirm, setExportConfirm] = useState<{ kind: 'events' | 'alerts' } | null>(null)
+  const [exporting, setExporting] = useState(false)
 
   // 认证事件监听
   useEffect(() => {
@@ -192,6 +194,47 @@ export default function App() {
     } catch { setErr('加载告警详情失败') }
   }
 
+  // 导出：带 token 请求导出端点，拿 blob 触发浏览器下载
+  async function doExport(kind: 'events' | 'alerts') {
+    setExporting(true)
+    try {
+      const params = new URLSearchParams()
+      if (kind === 'events') {
+        if ((route as any).host) params.set('hostname', (route as any).host)
+        if ((route as any).q) params.set('q', (route as any).q)
+      }
+      const qs = params.toString()
+      const r = await fetch(`${API}/export/${kind}${qs ? '?' + qs : ''}`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || ''}` }
+      })
+      if (r.status === 401) {
+        clearAuth()
+        window.dispatchEvent(new CustomEvent('baize-auth', { detail: 'unauthorized' }))
+        throw new Error('登录已过期，请重新登录')
+      }
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}))
+        throw new Error((d as any).error || `导出失败 (${r.status})`)
+      }
+      const blob = await r.blob()
+      const cd = r.headers.get('Content-Disposition') || ''
+      const m = cd.match(/filename="?([^";]+)"?/)
+      const filename = m ? m[1] : `${kind}_${Date.now()}.csv`
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (e: any) {
+      setErr(e.message)
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const host = route.page === 'host-detail' ? hosts.find(h => h.agent_id === route.agentId) : null
 
   // ── 判断当前应该渲染哪个页面 ──────────────────────────
@@ -258,6 +301,7 @@ export default function App() {
       <main className="main">
         {err && <div className="error">{err}</div>}
         {loading && <div className="loading">加载中...</div>}
+        {exporting && <div className="loading">⏳ 正在生成导出文件，请稍候…（最多 50,000 条，数据量大时可能需要一些时间）</div>}
 
         {!loading && route.page === 'hosts' && hosts && (
           <div className="grid">
@@ -357,6 +401,10 @@ export default function App() {
         )}
 
         {!loading && route.page === 'alerts' && (
+          <>
+            <div className="filter-bar" style={{ justifyContent: 'flex-end' }}>
+              <button onClick={() => setExportConfirm({ kind: 'alerts' })} className="btn" disabled={exporting}>{exporting ? '⏳ 导出中...' : '⬇ 导出'}</button>
+            </div>
           <table className="table">
             <thead>
               <tr><th>严重度</th><th>规则</th><th>主机</th><th>类型</th><th>时间</th></tr>
@@ -374,6 +422,7 @@ export default function App() {
               {alerts.length === 0 && <tr><td colSpan={5} className="empty">暂无告警</td></tr>}
             </tbody>
           </table>
+          </>
         )}
 
         {!loading && route.page === 'events' && (
@@ -396,6 +445,7 @@ export default function App() {
                 navigate(qs ? 'events?' + qs : 'events')
               }} onKeyDown={e => { if (e.key === 'Enter') { (e.target as HTMLInputElement).blur() } }} placeholder="搜索 (PID, IP, 域名, 文件名)..." className="input" style={{width:'auto',flex:2}} />
               <button onClick={doSearch} className="btn">查询</button>
+              <button onClick={() => setExportConfirm({ kind: 'events' })} className="btn" disabled={exporting}>{exporting ? '⏳ 导出中...' : '⬇ 导出'}</button>
             </div>
             <table className="table">
               <thead><tr><th>时间</th><th>主机</th><th>类型</th><th>摘要</th><th></th></tr></thead>
@@ -467,6 +517,34 @@ export default function App() {
                   {!eventDetail.raw && <tr><td colSpan={2} className="empty">无详细数据</td></tr>}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* 导出确认弹窗 */}
+      {exportConfirm && (
+        <div className="overlay" onClick={() => setExportConfirm(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '440px' }}>
+            <div className="modal-header">
+              <strong>确认导出</strong>
+              <button className="close" onClick={() => setExportConfirm(null)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="field">
+                <label>导出内容</label>
+                <span>{exportConfirm.kind === 'events' ? '事件记录（当前过滤条件下，最多 50,000 条）' : '全部告警记录（最多 50,000 条）'}</span>
+              </div>
+              {exportConfirm.kind === 'events' && ((route as any).host || (route as any).q) && (
+                <div className="field">
+                  <label>当前过滤</label>
+                  <span>{[(route as any).host ? `主机: ${(route as any).host}` : '', (route as any).q ? `搜索: ${(route as any).q}` : ''].filter(Boolean).join('　')}</span>
+                </div>
+              )}
+              <div className="field"><label>文件格式</label><span>CSV（UTF-8，Excel/WPS 可直接打开）</span></div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', padding: '0 1rem 1rem' }}>
+              <button className="btn" onClick={() => setExportConfirm(null)}>取消</button>
+              <button className="btn" onClick={() => { const k = exportConfirm.kind; setExportConfirm(null); doExport(k) }}>确认导出</button>
             </div>
           </div>
         </div>

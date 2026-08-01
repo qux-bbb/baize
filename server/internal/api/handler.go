@@ -2,9 +2,11 @@
 package api
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -232,6 +234,86 @@ func (h *Handler) ConfigEventTypes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// ── 导出（CSV） ──────────────────────────────────────────────
+
+// exportLimit 单次导出的最大行数（超出只导出最新的 N 条）
+const exportLimit = 50000
+
+// ExportEvents 按当前过滤条件导出事件为 CSV
+func (h *Handler) ExportEvents(w http.ResponseWriter, r *http.Request) {
+	hostname := r.URL.Query().Get("hostname")
+	q := r.URL.Query().Get("q")
+	rows, err := h.store.SearchEventsRaw(hostname, q, exportLimit)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	headers := []string{"@timestamp", "hostname", "agent_id", "os_type", "event_type", "event_action",
+		"pid", "parent_pid", "process_name", "image_path", "command_line", "user",
+		"file_path", "file_size", "hash_sha256",
+		"local_ip", "local_port", "remote_ip", "remote_port", "protocol", "direction",
+		"registry_key", "registry_value_name", "task_name", "task_path",
+		"rule_name", "target_path", "matched_string", "query_name", "query_type", "result_ips"}
+	filename := fmt.Sprintf("events_%s.csv", time.Now().Format("20060102_150405"))
+	writeCSV(w, filename, headers, rows)
+}
+
+// ExportAlerts 导出全部告警为 CSV
+func (h *Handler) ExportAlerts(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.store.SearchAlertsRaw(exportLimit)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	headers := []string{"@timestamp", "alert_id", "rule_id", "rule_name", "severity",
+		"hostname", "event_type", "description", "tags", "source_event"}
+	filename := fmt.Sprintf("alerts_%s.csv", time.Now().Format("20060102_150405"))
+	writeCSV(w, filename, headers, rows)
+}
+
+// writeCSV 以 CSV 格式输出（UTF-8 BOM，Excel/WPS 中文不乱码）
+func writeCSV(w http.ResponseWriter, filename string, headers []string, rows []map[string]interface{}) {
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	w.Write([]byte{0xEF, 0xBB, 0xBF})
+	cw := csv.NewWriter(w)
+	_ = cw.Write(headers)
+	for _, row := range rows {
+		line := make([]string, len(headers))
+		for i, h := range headers {
+			line[i] = csvVal(row, h)
+		}
+		_ = cw.Write(line)
+	}
+	cw.Flush()
+}
+
+// csvVal 将字段值格式化为 CSV 单元格文本（数组字段用 | 分隔）
+func csvVal(fields map[string]interface{}, key string) string {
+	v, ok := fields[key]
+	if !ok {
+		return ""
+	}
+	switch t := v.(type) {
+	case string:
+		return t
+	case float64:
+		return strconv.FormatFloat(t, 'f', -1, 64)
+	case []interface{}:
+		parts := make([]string, 0, len(t))
+		for _, item := range t {
+			if s, ok := item.(string); ok && s != "" {
+				parts = append(parts, s)
+			}
+		}
+		return strings.Join(parts, "|")
+	case nil:
+		return ""
+	default:
+		return fmt.Sprintf("%v", t)
+	}
 }
 
 // ── 系统信息查询 ──────────────────────────────────────────

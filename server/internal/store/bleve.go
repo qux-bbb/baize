@@ -464,6 +464,66 @@ func (s *Store) SearchAlerts(size int) ([]AlertResult, int, error) {
 	return alerts, len(alerts), nil
 }
 
+// SearchAlertsRaw 查询告警原始字段（CSV 导出用，字段全量）
+func (s *Store) SearchAlertsRaw(size int) ([]map[string]interface{}, error) {
+	q := bleve.NewQueryStringQuery(`type:alert`)
+	search := bleve.NewSearchRequest(q)
+	search.Size = size
+	search.SortBy([]string{"-@timestamp"})
+	search.Fields = []string{"alert_id", "rule_id", "rule_name", "severity", "hostname", "description", "event_type", "@timestamp", "tags", "source_event"}
+
+	result, err := s.index.Search(search)
+	if err != nil {
+		return nil, err
+	}
+
+	rows := make([]map[string]interface{}, 0, len(result.Hits))
+	for _, hit := range result.Hits {
+		rows = append(rows, hit.Fields)
+	}
+	return rows, nil
+}
+
+// SearchEventsRaw 查询事件原始字段（CSV 导出用，字段全量，过滤逻辑与 SearchEvents 一致）
+func (s *Store) SearchEventsRaw(hostname, query string, size int) ([]map[string]interface{}, error) {
+	q := bleve.NewQueryStringQuery(`type:event`)
+	search := bleve.NewSearchRequest(q)
+	search.Size = size
+	search.SortBy([]string{"-@timestamp"})
+	search.Fields = []string{"@timestamp", "event_type", "event_action", "pid", "hostname", "agent_id", "os_type", "parent_pid", "process_name", "image_path", "command_line", "user", "file_path", "file_size", "hash_sha256", "local_ip", "local_port", "remote_ip", "remote_port", "protocol", "direction", "registry_key", "registry_value_name", "task_name", "task_path", "rule_name", "target_path", "matched_string", "query_name", "query_type", "result_ips"}
+
+	result, err := s.index.Search(search)
+	if err != nil {
+		return nil, err
+	}
+
+	var rows []map[string]interface{}
+	for _, hit := range result.Hits {
+		// Go-side 过滤（与 SearchEvents 一致）
+		if hostname != "" {
+			if getFieldStr(hit.Fields, "hostname") != hostname {
+				continue
+			}
+		}
+		if query != "" {
+			matched := false
+			for _, f := range []string{"hostname", "event_type", "image_path", "command_line",
+				"file_path", "local_ip", "remote_ip", "process_name", "query_name", "result_ips",
+				"summary", "registry_key", "task_name", "target_path", "protocol", "direction"} {
+				if v := getFieldStr(hit.Fields, f); v != "" && strings.Contains(strings.ToLower(v), strings.ToLower(query)) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+		rows = append(rows, hit.Fields)
+	}
+	return rows, nil
+}
+
 // SearchEvents 查询事件时间线
 func (s *Store) SearchEvents(hostname, query string, size int) ([]EventResult, error) {
 	// Bleve query string 的 + 语法不稳定，先查全部再在 Go 中过滤

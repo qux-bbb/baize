@@ -301,6 +301,8 @@ func main() {
 			mux.HandleFunc("GET /api/config/event-types", apiHandler.ConfigEventTypes)
 			mux.HandleFunc("POST /api/config/event-types", apiHandler.ConfigEventTypes)
 			mux.HandleFunc("GET /api/events", apiHandler.Events)
+			mux.HandleFunc("GET /api/export/events", apiHandler.ExportEvents)
+			mux.HandleFunc("GET /api/export/alerts", apiHandler.ExportAlerts)
 			mux.HandleFunc("GET /api/systeminfo", apiHandler.SystemInfo)
 		}
 		mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
