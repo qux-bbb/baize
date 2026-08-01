@@ -31,6 +31,7 @@ type AuthConfig struct {
 	Username         string `json:"username"`
 	PasswordHash     string `json:"password_hash"`
 	MustChangePwd    bool   `json:"must_change_password"`
+	SecretKey        string `json:"secret_key,omitempty"` // JWT 签名密钥（持久化，重启复用）
 	CreatedAt        string `json:"created_at,omitempty"`
 }
 
@@ -48,13 +49,30 @@ type AuthManager struct {
 func NewAuthManager(configPath string) *AuthManager {
 	am := &AuthManager{
 		configPath: configPath,
-		secret:     generateSecret(),
 		revoked:    make(map[string]int64),
 	}
 
 	if data, err := os.ReadFile(configPath); err == nil {
 		if err := json.Unmarshal(data, &am.cfg); err == nil {
 			log.Printf("[Auth] 认证配置已加载: %s", configPath)
+			if am.cfg.SecretKey != "" {
+				// 复用持久化的密钥，保证重启后已签发的 token 仍然有效
+				key, err := base64.StdEncoding.DecodeString(am.cfg.SecretKey)
+				if err != nil {
+					log.Printf("[Auth] secret_key 解码失败，重新生成: %v", err)
+					am.secret = generateSecret()
+					am.cfg.SecretKey = base64.StdEncoding.EncodeToString(am.secret)
+					am.save()
+				} else {
+					am.secret = key
+				}
+			} else {
+				// 老配置没有密钥 → 生成并写回
+				am.secret = generateSecret()
+				am.cfg.SecretKey = base64.StdEncoding.EncodeToString(am.secret)
+				am.save()
+				log.Printf("[Auth] 已生成 JWT 密钥并持久化到配置文件")
+			}
 			return am
 		}
 		log.Printf("[Auth] 配置文件损坏，将重新初始化: %v", err)
@@ -71,10 +89,12 @@ func (am *AuthManager) initDefault() {
 		log.Fatalf("[Auth] bcrypt 失败: %v", err)
 	}
 
+	am.secret = generateSecret()
 	am.cfg = AuthConfig{
 		Username:      "admin",
 		PasswordHash:  string(hash),
 		MustChangePwd: true,
+		SecretKey:     base64.StdEncoding.EncodeToString(am.secret),
 		CreatedAt:     time.Now().Format(time.RFC3339),
 	}
 	am.save()

@@ -92,6 +92,9 @@ export default function App() {
         setAuthState(null)
       } else if (evt.detail === 'must_change_password') {
         setAuthState(prev => prev ? { ...prev, mustChange: true } : null)
+      } else if (evt.detail === 'unauthorized') {
+        // token 失效（过期/吊销/密钥变更）→ 回到登录页
+        setAuthState(null)
       }
     }
     window.addEventListener('baize-auth', handler)

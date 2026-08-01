@@ -64,6 +64,10 @@ export async function fetchJSON<T>(url: string, options?: RequestInit): Promise<
       authMustChange = true
       localStorage.setItem('must_change_password', 'true')
       dispatch('must_change_password')
+    } else {
+      // 其他 401（token 无效/过期/吊销）→ 清除本地认证状态，跳回登录页
+      clearAuth()
+      dispatch('unauthorized')
     }
     throw new Error(errMsg)
   }
