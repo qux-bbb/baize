@@ -52,7 +52,10 @@ function parseHash(): Route {
   if (path.startsWith('hosts/')) return { page: 'host-detail', agentId: path.slice(6) }
   if (path === 'alerts') return { page: 'alerts' }
   if (path === 'config') return { page: 'config' }
-  if (path === 'events') return { page: 'events', host: params.get('host') || undefined }
+  if (path === 'events') {
+    // 兼容两种参数名：主机详情页跳转用 host=，事件页过滤框用 hostname=
+    return { page: 'events', host: params.get('host') || params.get('hostname') || undefined, q: params.get('q') || undefined }
+  }
   return { page: 'hosts' }
 }
 
@@ -300,7 +303,7 @@ export default function App() {
 
       <main className="main">
         {err && <div className="error">{err}</div>}
-        {loading && <div className="loading">加载中...</div>}
+        {loading && route.page !== 'events' && <div className="loading">加载中...</div>}
         {exporting && <div className="loading">⏳ 正在生成导出文件，请稍候…（最多 50,000 条，数据量大时可能需要一些时间）</div>}
 
         {!loading && route.page === 'hosts' && hosts && (
@@ -425,7 +428,7 @@ export default function App() {
           </>
         )}
 
-        {!loading && route.page === 'events' && (
+        {route.page === 'events' && (
           <>
             <div className="filter-bar">
               <input value={hostInput} onChange={e => setHostInput(e.target.value)} onBlur={e => {
@@ -436,7 +439,7 @@ export default function App() {
                 const qs = params.toString()
                 navigate(qs ? 'events?' + qs : 'events')
               }} onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }} placeholder="按主机名过滤..." className="input" style={{width:'auto',flex:1}} />
-              <input value={(route as any).q || searchQ} onChange={e => setSearchQ(e.target.value)} onBlur={e => {
+              <input value={searchQ} onChange={e => setSearchQ(e.target.value)} onBlur={e => {
                 const v = e.target.value
                 const params = new URLSearchParams()
                 if ((route as any).host) params.set('hostname', (route as any).host)
@@ -447,6 +450,7 @@ export default function App() {
               <button onClick={doSearch} className="btn">查询</button>
               <button onClick={() => setExportConfirm({ kind: 'events' })} className="btn" disabled={exporting}>{exporting ? '⏳ 导出中...' : '⬇ 导出'}</button>
             </div>
+            {loading ? <div className="loading">加载中...</div> : (
             <table className="table">
               <thead><tr><th>时间</th><th>主机</th><th>类型</th><th>摘要</th><th></th></tr></thead>
               <tbody>
@@ -462,6 +466,7 @@ export default function App() {
                 {events.length === 0 && <tr><td colSpan={5} className="empty">暂无事件</td></tr>}
               </tbody>
             </table>
+            )}
           </>
         )}
       </main>

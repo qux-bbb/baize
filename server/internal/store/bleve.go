@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/blevesearch/bleve/v2"
+	bquery "github.com/blevesearch/bleve/v2/search/query"
 	index "github.com/blevesearch/bleve_index_api"
 
 	pb "github.com/qux-bbb/baize/proto/gen/go/baize/v1"
@@ -486,12 +487,19 @@ func (s *Store) SearchAlertsRaw(size int) ([]map[string]interface{}, error) {
 
 // SearchEventsRaw 查询事件原始字段（CSV 导出用，字段全量，过滤逻辑与 SearchEvents 一致）
 func (s *Store) SearchEventsRaw(hostname, query string, size int) ([]map[string]interface{}, error) {
-	q := bleve.NewQueryStringQuery(`type:event`)
+	// hostname 下推到 Bleve 查询（精确 phrase 匹配）；query 仍 Go 侧模糊过滤
+	// （q 语义杂：PID/IP/域名/文件名，Bleve 分词对 192.168.1.1、pid=123 不可控，Contains 最符合预期）
+	var q bquery.Query = bleve.NewQueryStringQuery("type:event")
+	if hostname != "" {
+		mp := bleve.NewMatchPhraseQuery(hostname)
+		mp.SetField("hostname")
+		q = bleve.NewConjunctionQuery(q, mp)
+	}
+
 	search := bleve.NewSearchRequest(q)
 	search.Size = size
 	search.SortBy([]string{"-@timestamp"})
 	search.Fields = []string{"@timestamp", "event_type", "event_action", "pid", "hostname", "agent_id", "os_type", "parent_pid", "process_name", "image_path", "command_line", "user", "file_path", "file_size", "hash_sha256", "local_ip", "local_port", "remote_ip", "remote_port", "protocol", "direction", "registry_key", "registry_value_name", "task_name", "task_path", "rule_name", "target_path", "matched_string", "query_name", "query_type", "result_ips"}
-
 	result, err := s.index.Search(search)
 	if err != nil {
 		return nil, err
@@ -499,12 +507,7 @@ func (s *Store) SearchEventsRaw(hostname, query string, size int) ([]map[string]
 
 	var rows []map[string]interface{}
 	for _, hit := range result.Hits {
-		// Go-side 过滤（与 SearchEvents 一致）
-		if hostname != "" {
-			if getFieldStr(hit.Fields, "hostname") != hostname {
-				continue
-			}
-		}
+		// query Go 侧过滤（hostname 已下推）
 		if query != "" {
 			matched := false
 			for _, f := range []string{"hostname", "event_type", "image_path", "command_line",
@@ -526,8 +529,14 @@ func (s *Store) SearchEventsRaw(hostname, query string, size int) ([]map[string]
 
 // SearchEvents 查询事件时间线
 func (s *Store) SearchEvents(hostname, query string, size int) ([]EventResult, error) {
-	// Bleve query string 的 + 语法不稳定，先查全部再在 Go 中过滤
-	q := bleve.NewQueryStringQuery("type:event")
+	// hostname 下推到 Bleve 查询（精确 phrase 匹配）；query 仍 Go 侧模糊过滤
+	// （q 语义杂：PID/IP/域名/文件名，Bleve 分词对 192.168.1.1、pid=123 不可控，Contains 最符合预期）
+	var q bquery.Query = bleve.NewQueryStringQuery("type:event")
+	if hostname != "" {
+		mp := bleve.NewMatchPhraseQuery(hostname)
+		mp.SetField("hostname")
+		q = bleve.NewConjunctionQuery(q, mp)
+	}
 
 	search := bleve.NewSearchRequest(q)
 	search.Size = size
@@ -541,12 +550,7 @@ func (s *Store) SearchEvents(hostname, query string, size int) ([]EventResult, e
 
 	var events []EventResult
 	for _, hit := range result.Hits {
-		// Go-side 过滤
-		if hostname != "" {
-			if getFieldStr(hit.Fields, "hostname") != hostname {
-				continue
-			}
-		}
+		// query Go 侧过滤（hostname 已下推）
 		if query != "" {
 			// 检查所有字段
 			matched := false

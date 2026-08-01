@@ -180,10 +180,15 @@ func (h *Handler) ConfigFileWatch(w http.ResponseWriter, r *http.Request) {
 
 // ── 事件时间线 ──────────────────────────────────────────────
 
+// Events 事件时间线查询。
+// size 取 5000：hostname 已下推 Bleve，q 在 Go 侧模糊过滤，5000 条覆盖足够深的
+// 历史窗口（旧逻辑"先取最新100条再过滤"导致搜不到旧数据，已修复）。
+const eventsQuerySize = 5000
+
 func (h *Handler) Events(w http.ResponseWriter, r *http.Request) {
 	hostname := r.URL.Query().Get("hostname")
 	q := r.URL.Query().Get("q")
-	events, err := h.store.SearchEvents(hostname, q, 100)
+	events, err := h.store.SearchEvents(hostname, q, eventsQuerySize)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
