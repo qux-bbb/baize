@@ -14,6 +14,11 @@ cmd/                     # go build 二进制输出
 agent/target/
 **/*.rs.bk
 
+# WiX 构建产物（agent/wix/ 源码需提交，产物可重建）
+agent/wix/*.msi
+agent/wix/*.wixobj
+agent/wix/*.wixpdb
+
 # IDE
 .vscode/
 .idea/

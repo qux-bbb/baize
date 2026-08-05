@@ -1,7 +1,7 @@
 // Windows 服务化
 use anyhow::{Context, Result};
 use std::ffi::OsString;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use tracing::info;
 use windows_service::{
     service::{
@@ -13,12 +13,6 @@ use windows_service::{
     service_manager::{ServiceManager, ServiceManagerAccess},
 };
 
-static SERVICE_STOPPED: AtomicBool = AtomicBool::new(false);
-
-pub fn should_stop() -> bool {
-    SERVICE_STOPPED.load(Ordering::Relaxed)
-}
-
 extern "system" fn service_main(_argc: u32, _argv: *mut *mut u16) {
     let service_name = "baize-agent";
 
@@ -27,7 +21,7 @@ extern "system" fn service_main(_argc: u32, _argv: *mut *mut u16) {
             windows_service::service::ServiceControl::Stop
             | windows_service::service::ServiceControl::Shutdown => {
                 info!("[Service] 收到停止信号");
-                SERVICE_STOPPED.store(true, Ordering::Relaxed);
+                crate::STOP_FLAG.store(true, Ordering::Relaxed);
                 ServiceControlHandlerResult::NoError
             }
             _ => ServiceControlHandlerResult::NotImplemented,
@@ -55,13 +49,18 @@ extern "system" fn service_main(_argc: u32, _argv: *mut *mut u16) {
 
     info!("[Service] Baize Agent 服务已启动");
 
-    // 等待停止信号
-    while !SERVICE_STOPPED.load(Ordering::Relaxed) {
-        std::thread::sleep(std::time::Duration::from_secs(1));
+    // 创建 tokio runtime 并运行 Agent 主逻辑（采集 + gRPC 上报）。
+    // 停止信号由控制处理器置位 crate::STOP_FLAG，主循环检测后干净退出。
+    match tokio::runtime::Runtime::new() {
+        Ok(rt) => {
+            if let Err(e) = rt.block_on(crate::run_agent_loop(None, None, None, 30, None)) {
+                eprintln!("[Service] Agent 主逻辑退出: {:?}", e);
+            }
+        }
+        Err(e) => {
+            eprintln!("[Service] 创建 tokio runtime 失败: {:?}", e);
+        }
     }
-
-    // 这里后续可以把 agent 的主逻辑（tokio runtime + gRPC）搬进来
-    // 目前只支持服务生命周期管理
 
     if let Err(e) = status_handle.set_service_status(ServiceStatus {
         service_type: ServiceType::OWN_PROCESS,

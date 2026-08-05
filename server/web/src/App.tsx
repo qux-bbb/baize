@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import ConfigPage from './ConfigPage'
+import AgentDownload from './AgentDownload'
 import LoginPage from './LoginPage'
 import ChangePasswordPage from './ChangePasswordPage'
 import ChangePasswordModal from './ChangePasswordModal'
@@ -86,6 +87,7 @@ export default function App() {
   const [searchQ, setSearchQ] = useState('')
   const [hostInput, setHostInput] = useState('')
   const [showChangePwd, setShowChangePwd] = useState(false)
+  const [showAgentDownload, setShowAgentDownload] = useState(false)
   const [exportConfirm, setExportConfirm] = useState<{ kind: 'events' | 'alerts' } | null>(null)
   const [exporting, setExporting] = useState(false)
 
@@ -307,7 +309,16 @@ export default function App() {
         {exporting && <div className="loading">⏳ 正在生成导出文件，请稍候…（最多 50,000 条，数据量大时可能需要一些时间）</div>}
 
         {!loading && route.page === 'hosts' && hosts && (
-          <div className="grid">
+          <>
+            <button
+              onClick={() => setShowAgentDownload(v => !v)}
+              className={showAgentDownload ? 'active' : ''}
+              style={{ marginBottom: '0.8rem' }}
+            >
+              📦 下载 Agent {showAgentDownload ? '▾' : '▸'}
+            </button>
+            {showAgentDownload && <AgentDownload />}
+            <div className="grid">
             {hosts.map(h => (
               <div key={h.agent_id} className="card" onClick={() => navigate('hosts/' + h.agent_id)}>
                 <div className="card-header"><span className={`dot ${h.is_online ? 'green' : 'gray'}`} /><strong>{h.hostname}</strong><span className={`badge ${h.is_online ? 'online' : 'offline'}`}>{h.is_online ? '在线' : '离线'}</span></div>
@@ -325,7 +336,8 @@ export default function App() {
               </div>
             ))}
             {hosts.length === 0 && <div className="empty">暂无在线主机</div>}
-          </div>
+            </div>
+          </>
         )}
 
         {!loading && route.page === 'config' && <ConfigPage />}

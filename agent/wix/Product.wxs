@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Baize (白泽) EDR Agent 安装包定义（WiX 3.14，纯 core schema，无扩展依赖）
+  构建: build_msi.bat [baize-agent.exe 路径]
+  安装: msiexec /i baize-agent.msi /q SERVER_ADDR="http://10.0.0.1:50051"
+  说明:
+    - 不传 SERVER_ADDR 时 agent.conf 保持空 server，装后可手动编辑
+      C:\Program Files\Baize\agent.conf 并重启服务来配置
+    - 服务注册/删除复用 Agent 自身的 install / uninstall 子命令
+      （windows-service crate 实现，MSI 只负责在合适时机调用）
+    - auditpol（4688 审计）由 Agent 自身处理，安装包不干预
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="Baize EDR Agent" Language="2052" Version="0.1.0"
+           Manufacturer="Baize" UpgradeCode="43cfe540-c0ae-4c2d-94bf-b53978c30345"
+           Codepage="936">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine"
+             Description="Baize (白泽) EDR 终端检测与响应 Agent" />
+
+    <MajorUpgrade DowngradeErrorMessage="已安装更高版本的 Baize Agent。" />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- SERVER_ADDR: Agent 连接的 Server gRPC 地址（如 http://10.0.0.1:50051）。
+         Secure=yes 允许命令行/转换文件传入；deferred CA 需要。 -->
+    <Property Id="SERVER_ADDR" Secure="yes" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="Baize" />
+      </Directory>
+    </Directory>
+
+    <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+      <!-- Agent 主程序（x64） -->
+      <Component Id="AgentExe" Guid="f57389c6-218c-4aa9-84d4-baa2f66b6644" Win64="yes">
+        <File Id="AgentExeFile" Source="$(var.AgentExe)" KeyPath="yes" />
+      </Component>
+
+      <!-- 默认配置（server 空，由 CA 注入 SERVER_ADDR） -->
+      <Component Id="AgentConf" Guid="935e0e3a-130c-4942-b53d-2be963465168" Win64="yes">
+        <File Id="AgentConfFile" Source="agent.conf" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- ── custom actions ──
+         全部用 WixQuietExec（WiX 内置 WixCA.dll，隐藏窗口执行，不闪黑框）。
+         安装: 写配置(SERVER_ADDR 非空时) → 注册服务(install 子命令) → 启动服务(net start)
+         卸载: 删除服务(uninstall 子命令)，在 RemoveFiles 之前执行（exe 还在） -->
+    <CustomAction Id="SetWriteConfigCmd"
+                  Return="check"
+                  Property="RunWriteConfigCmd"
+                  Value="&quot;[INSTALLFOLDER]baize-agent.exe&quot; --write-config &quot;[SERVER_ADDR]&quot;" />
+    <CustomAction Id="RunWriteConfigCmd"
+                  BinaryKey="WixCA"
+                  DllEntry="WixQuietExec"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="check" />
+    <CustomAction Id="SetInstallSvcCmd"
+                  Return="check"
+                  Property="RunInstallSvcCmd"
+                  Value="&quot;[INSTALLFOLDER]baize-agent.exe&quot; --install" />
+    <CustomAction Id="RunInstallSvcCmd"
+                  BinaryKey="WixCA"
+                  DllEntry="WixQuietExec"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="check" />
+    <CustomAction Id="SetStartSvcCmd"
+                  Return="check"
+                  Property="RunStartSvcCmd"
+                  Value="&quot;[SystemFolder]net.exe&quot; start baize-agent" />
+    <CustomAction Id="RunStartSvcCmd"
+                  BinaryKey="WixCA"
+                  DllEntry="WixQuietExec"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="check" />
+    <CustomAction Id="SetUninstallSvcCmd"
+                  Return="check"
+                  Property="RunUninstallSvcCmd"
+                  Value="&quot;[INSTALLFOLDER]baize-agent.exe&quot; --uninstall" />
+    <CustomAction Id="RunUninstallSvcCmd"
+                  BinaryKey="WixCA"
+                  DllEntry="WixQuietExec"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="check" />
+
+    <InstallExecuteSequence>
+      <Custom Action="SetWriteConfigCmd" Before="RunWriteConfigCmd">
+        <![CDATA[SERVER_ADDR <> ""]]>
+      </Custom>
+      <Custom Action="RunWriteConfigCmd" After="InstallFiles">
+        <![CDATA[SERVER_ADDR <> ""]]>
+      </Custom>
+      <Custom Action="SetInstallSvcCmd" Before="RunInstallSvcCmd" />
+      <Custom Action="RunInstallSvcCmd" After="RunWriteConfigCmd" />
+      <Custom Action="SetStartSvcCmd" Before="RunStartSvcCmd" />
+      <Custom Action="RunStartSvcCmd" After="RunInstallSvcCmd" />
+      <Custom Action="SetUninstallSvcCmd" Before="RunUninstallSvcCmd">
+        <![CDATA[REMOVE~="ALL"]]>
+      </Custom>
+      <Custom Action="RunUninstallSvcCmd" Before="RemoveFiles">
+        <![CDATA[REMOVE~="ALL"]]>
+      </Custom>
+    </InstallExecuteSequence>
+
+    <Feature Id="ProductFeature" Title="Baize Agent" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+    </Feature>
+  </Product>
+</Wix>

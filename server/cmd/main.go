@@ -232,10 +232,15 @@ func initEngine(esStore *store.Store) *engine.Engine {
 
 func main() {
 	port := flag.Int("port", 50051, "gRPC 端口")
+	dataDir := flag.String("data-dir", "./data", "数据目录（Bleve 索引、日志、auth.json）")
+	httpPort := flag.Int("http-port", 8080, "HTTP API / Dashboard 端口")
+	publicAddr := flag.String("public-addr", "", "Server 对外 gRPC 地址（注入 agent.conf），如 http://10.0.0.1:50051；留空则用请求 Host 推断")
+	agentBinary := flag.String("agent-binary", "", "Agent 可执行文件路径（下载打包用），如 C:\\Baize\\baize-agent.exe")
+	agentInstaller := flag.String("agent-installer", "", "预构建的 Agent MSI 安装包路径（下载用），如 C:\\Baize\\baize-agent.msi")
 	flag.Parse()
 
 	// 日志写入文件（与 stderr 同时输出）
-	logDir := filepath.Join(".", "data")
+	logDir := *dataDir
 	os.MkdirAll(logDir, 0755)
 	logPath := filepath.Join(logDir, "server.log")
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
@@ -247,7 +252,7 @@ func main() {
 
 	// 初始化 Bleve 存储
 	log.Printf("[Store] 初始化 Bleve 索引...")
-	storePath := filepath.Join(".", "data", "baize.bleve")
+	storePath := filepath.Join(*dataDir, "baize.bleve")
 	bleveStore, err := store.New(storePath)
 	if err != nil {
 		log.Printf("[Store] 初始化失败: %v（不影响 Server 启动）", err)
@@ -272,7 +277,7 @@ func main() {
 	}
 
 	// 初始化认证
-	authPath := filepath.Join(".", "data", "auth.json")
+	authPath := filepath.Join(*dataDir, "auth.json")
 	authManager := api.NewAuthManager(authPath)
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
@@ -289,13 +294,16 @@ func main() {
 	{
 		mux := http.NewServeMux()
 		if bleveStore != nil {
-			apiHandler := api.New(bleveStore, cmdBus, cfg, authManager)
+			apiHandler := api.New(bleveStore, cmdBus, cfg, authManager, *agentBinary, *publicAddr, *agentInstaller)
 			mux.HandleFunc("POST /api/login", apiHandler.Login)
 			mux.HandleFunc("POST /api/change-password", apiHandler.ChangePassword)
 			mux.HandleFunc("POST /api/logout", apiHandler.Logout)
 			mux.HandleFunc("GET /api/hosts", apiHandler.Hosts)
 			mux.HandleFunc("GET /api/alerts", apiHandler.Alerts)
 			mux.HandleFunc("GET /api/alert", apiHandler.AlertDetail)
+			mux.HandleFunc("GET /api/agent/info", apiHandler.AgentInfo)
+			mux.HandleFunc("GET /api/agent/package", apiHandler.AgentPackage)
+			mux.HandleFunc("GET /api/agent/installer", apiHandler.AgentInstaller)
 			mux.HandleFunc("GET /api/config/file-watch", apiHandler.ConfigFileWatch)
 			mux.HandleFunc("POST /api/config/file-watch", apiHandler.ConfigFileWatch)
 			mux.HandleFunc("GET /api/config/event-types", apiHandler.ConfigEventTypes)
@@ -329,11 +337,11 @@ func main() {
 			w.Write(data)
 		})
 		httpSrv := &http.Server{
-			Addr:    fmt.Sprintf(":%d", 8080),
+			Addr:    fmt.Sprintf(":%d", *httpPort),
 			Handler: api.CORSMiddleware(api.AuthMiddleware(authManager)(mux)),
 		}
 		go func() {
-			log.Printf("[HTTP] Dashboard + API: http://localhost:%d", 8080)
+			log.Printf("[HTTP] Dashboard + API: http://localhost:%d", *httpPort)
 			if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 				log.Printf("[HTTP] 错误: %v", err)
 			}

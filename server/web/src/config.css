@@ -1,5 +1,6 @@
 /* Config page */
 .config-page { max-width: 700px; margin: 0 auto; }
+.agent-download { border-bottom: 1px solid #334155; padding-bottom: 1.2rem; margin-bottom: 1.5rem; }
 .config-page h2 { margin-bottom: 1.2rem; font-size: 1.1rem; }
 .config-page h3 { margin: 1.5rem 0 0.5rem; font-size: 0.9rem; opacity: 0.7; }
 .form-group { margin-bottom: 0.8rem; }

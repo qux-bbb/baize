@@ -4,12 +4,21 @@ mod collector;
 #[cfg(windows)]
 mod service;
 
+/// 停止标志：Windows 服务模式收到 SCM 停止信号时置位，
+/// Agent 主循环据此干净退出。前台模式恒为 false。
+pub static STOP_FLAG: AtomicBool = AtomicBool::new(false);
+
+pub fn stop_requested() -> bool {
+    STOP_FLAG.load(Ordering::Relaxed)
+}
+
 pub mod pb {
     tonic::include_proto!("baize.v1");
 }
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -29,16 +38,19 @@ use pb::{AgentInfo, Event};
 #[derive(Parser)]
 #[command(name = "baize-agent", about = "Baize EDR Agent")]
 struct Cli {
-    #[arg(long, default_value = "http://127.0.0.1:50051")]
-    server: String,
+    #[arg(long, help = "Server gRPC 地址，如 http://192.168.1.10:50051；优先于 agent.conf")]
+    server: Option<String>,
     #[arg(long)]
     agent_id: Option<String>,
     /// 进程采集间隔（秒）
     #[arg(long, default_value = "30")]
     interval: u64,
-    /// 文件监控目录（逗号分隔）
-    #[arg(long, default_value = "")]
-    watch: String,
+    /// 文件监控目录（逗号分隔），优先于 agent.conf
+    #[arg(long)]
+    watch: Option<String>,
+    /// 将 Server 地址写入 exe 同目录 agent.conf 后退出（供 MSI 安装器调用）
+    #[arg(long)]
+    write_config: Option<String>,
     #[arg(long)]
     hostname: Option<String>,
     /// 安装为 Windows 服务
@@ -52,12 +64,36 @@ struct Cli {
     service: bool,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    // 日志同时输出到 stderr 和 data/agent.log
-    fs::create_dir_all("data").ok();
-    let log_file = fs::OpenOptions::new()
-        .create(true).append(true).open("data/agent.log").unwrap();
+/// 初始化日志：stderr + 文件双写。
+/// Windows 写到 %PROGRAMDATA%\Baize\agent.log（服务模式工作目录不可控，不能用相对路径）；
+/// 其他平台写到 data/agent.log。
+fn init_logging() {
+    #[cfg(windows)]
+    let log_path = {
+        let base = std::env::var("PROGRAMDATA").unwrap_or_else(|_| "C:\\ProgramData".into());
+        let dir = std::path::Path::new(&base).join("Baize");
+        if let Err(e) = fs::create_dir_all(&dir) {
+            eprintln!("创建日志目录失败: {:?}", e);
+        }
+        dir.join("agent.log")
+    };
+    #[cfg(not(windows))]
+    let log_path = {
+        fs::create_dir_all("data").ok();
+        std::path::PathBuf::from("data").join("agent.log")
+    };
+
+    let Ok(log_file) = fs::OpenOptions::new()
+        .create(true).append(true).open(&log_path) else {
+        eprintln!("打开日志文件失败: {}", log_path.display());
+        // 无文件日志时仍输出到 stderr
+        tracing_subscriber::fmt()
+            .with_env_filter("baize_agent=info")
+            .with_ansi(false)
+            .init();
+        return;
+    };
+
     tracing_subscriber::fmt()
         .with_env_filter("baize_agent=info")
         .with_ansi(false)
@@ -81,8 +117,19 @@ async fn main() -> Result<()> {
             Tee { stderr: std::io::stderr(), file }
         })
         .init();
+    info!("日志文件: {}", log_path.display());
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    init_logging();
 
     let cli = Cli::parse();
+
+    // 配置写入子命令（MSI 安装器 custom action 调用）：写 agent.conf 后退出
+    if let Some(addr) = cli.write_config {
+        return write_config_file(&addr);
+    }
 
     // 服务管理命令（Windows only）
     #[cfg(windows)]
@@ -98,20 +145,124 @@ async fn main() -> Result<()> {
             return service::run_as_service().map_err(|e| anyhow::anyhow!("{}", e));
         }
     }
+    run_agent_loop(cli.server, cli.watch, cli.agent_id, cli.interval, cli.hostname).await
+}
+
+/// exe 同目录的 agent.conf（JSON）。服务模式和前台模式都从可执行文件所在目录读取，
+/// 不依赖工作目录。CLI 参数优先级高于配置文件。
+#[derive(serde::Deserialize, Default)]
+#[serde(default)]
+struct AgentConfig {
+    /// Server gRPC 地址，如 http://192.168.1.10:50051
+    server: Option<String>,
+    /// TLS CA 证书路径（预留，TLS 上线后填写）
+    ca: Option<String>,
+    /// 文件监控目录（预留）
+    watch_dirs: Option<Vec<String>>,
+}
+
+impl AgentConfig {
+    fn load() -> Self {
+        let Some(exe) = std::env::current_exe().ok() else {
+            return AgentConfig::default();
+        };
+        let Some(dir) = exe.parent() else {
+            return AgentConfig::default();
+        };
+        let path = dir.join("agent.conf");
+        match std::fs::read_to_string(&path) {
+            Ok(content) => match serde_json::from_str(&content) {
+                Ok(cfg) => {
+                    tracing::info!("已加载配置: {}", path.display());
+                    cfg
+                }
+                Err(e) => {
+                    tracing::warn!("agent.conf 解析失败（{}）: {}", e, path.display());
+                    AgentConfig::default()
+                }
+            },
+            Err(_) => AgentConfig::default(),
+        }
+    }
+}
+
+/// 将 Server 地址写入 exe 同目录 agent.conf（MSI 安装器 custom action 调用）。
+/// 保留已有 ca/watch_dirs 配置；文件不存在或解析失败时生成默认结构。
+fn write_config_file(server: &str) -> Result<()> {
+    let exe = std::env::current_exe().context("无法获取可执行文件路径")?;
+    let dir = exe.parent().ok_or_else(|| anyhow::anyhow!("无法获取安装目录"))?;
+    let path = dir.join("agent.conf");
+
+    let mut conf: serde_json::Value = match std::fs::read_to_string(&path) {
+        Ok(content) => serde_json::from_str(&content).unwrap_or_else(|_| serde_json::json!({})),
+        Err(_) => serde_json::json!({}),
+    };
+    conf["server"] = serde_json::Value::String(server.to_string());
+    if conf.get("ca").is_none() {
+        conf["ca"] = serde_json::Value::String(String::new());
+    }
+    if conf.get("watch_dirs").is_none() {
+        conf["watch_dirs"] = serde_json::Value::Array(Vec::new());
+    }
+
+    std::fs::write(&path, serde_json::to_string_pretty(&conf)?)?;
+    println!("agent.conf 已写入: {}", path.display());
+    Ok(())
+}
+
+/// Agent 主循环：读取配置 → 构造主机信息 → 连接 Server → 断线重连。
+/// 服务模式下由 service::service_main 调用；前台模式由 main 调用。
+/// 参数优先级：CLI > agent.conf > 内置默认值。
+pub async fn run_agent_loop(
+    cli_server: Option<String>,
+    cli_watch: Option<String>,
+    cli_agent_id: Option<String>,
+    interval_secs: u64,
+    hostname_override: Option<String>,
+) -> Result<()> {
+    let cfg = AgentConfig::load();
+
+    // server 地址：CLI > 配置 > 默认（空串视为未配置）
+    let server = cli_server
+        .filter(|s| !s.is_empty())
+        .or_else(|| cfg.server.clone().filter(|s| !s.is_empty()))
+        .unwrap_or_else(|| "http://127.0.0.1:50051".to_string());
+
+    // 文件监控目录：CLI > 配置 > 默认（空，由 Server 下发）
+    let watch: Vec<String> = if let Some(w) = cli_watch {
+        if w.trim().is_empty() {
+            Vec::new()
+        } else {
+            w.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        }
+    } else if let Some(dirs) = &cfg.watch_dirs {
+        dirs.clone()
+    } else {
+        Vec::new()
+    };
+
+    if let Some(ca) = cfg.ca.as_deref().filter(|s| !s.is_empty()) {
+        info!("TLS CA 已配置: {}", ca);
+    }
+
     let sys = Arc::new(tokio::sync::Mutex::new(System::new_all()));
 
-    let hostname = cli.hostname.clone().unwrap_or_else(|| {
+    let hostname = hostname_override.unwrap_or_else(|| {
         sysinfo::System::host_name().unwrap_or_else(|| "unknown".into())
     });
 
     // Agent ID：优先用命令行指定的，否则从文件读取/自动生成并持久化
-    let agent_id = if let Some(id) = cli.agent_id.clone() {
+    let agent_id = if let Some(id) = cli_agent_id {
         id
     } else {
         load_or_create_agent_id()
     };
 
     info!("Agent {} ({}) 启动中...", agent_id, hostname);
+    info!("连接 Server: {}", server);
 
     // 采集主机信息：OS 版本 / 内核版本 / 启动时间 / 网卡 IP（sysinfo 跨平台，0.33 为关联函数）
     let os_version = sysinfo::System::os_version().unwrap_or_default();
@@ -140,8 +291,13 @@ async fn main() -> Result<()> {
     };
 
     // 断线重连循环
+    let watch_str = watch.join(",");
     loop {
-        match run(&cli.server, agent_info.clone(), &sys, cli.interval, &cli.watch).await {
+        if stop_requested() {
+            info!("收到停止请求，Agent 退出");
+            break;
+        }
+        match run(&server, agent_info.clone(), &sys, interval_secs, &watch_str).await {
             Ok(()) => {
                 info!("连接正常结束，5 秒后重连...");
                 time::sleep(Duration::from_secs(5)).await;
@@ -152,6 +308,8 @@ async fn main() -> Result<()> {
             }
         }
     }
+
+    Ok(())
 }
 
 /// 获取默认文件监控目录（按平台区分）
@@ -255,8 +413,12 @@ async fn run(
         });
     }
 
-    while let Some(cmd) = incoming.message().await? {
-        info!("收到指令: {:?}", cmd);
+    loop {
+        tokio::select! {
+            msg = incoming.message() => {
+                match msg {
+                    Ok(Some(cmd)) => {
+                        info!("收到指令: {:?}", cmd);
 
         // 执行指令
         if let Some(cmd_type) = &cmd.command_type {
@@ -321,6 +483,21 @@ async fn run(
                 completed_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64,
             };
             let _ = client.report_command_result(result_msg).await;
+                        }
+                    }
+                    Ok(None) => {
+                        info!("Server 流已关闭");
+                        break;
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            }
+            _ = time::sleep(Duration::from_secs(1)) => {
+                if stop_requested() {
+                    info!("收到停止请求，关闭连接");
+                    break;
+                }
+            }
         }
     }
 

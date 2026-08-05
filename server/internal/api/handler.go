@@ -20,10 +20,16 @@ type Handler struct {
 	cmdBus  *engine.CommandBus
 	cfg     *engine.ConfigManager
 	auth    *AuthManager
+	// agentBinary: agent.exe 路径（--agent-binary），zip 打包下载用
+	agentBinary string
+	// publicAddr: Server 对外 gRPC 地址（--public-addr），注入 agent.conf
+	publicAddr string
+	// agentInstaller: 预构建的 MSI 安装包路径（--agent-installer），直接下发
+	agentInstaller string
 }
 
-func New(s *store.Store, cmdBus *engine.CommandBus, cfg *engine.ConfigManager, auth *AuthManager) *Handler {
-	return &Handler{store: s, cmdBus: cmdBus, cfg: cfg, auth: auth}
+func New(s *store.Store, cmdBus *engine.CommandBus, cfg *engine.ConfigManager, auth *AuthManager, agentBinary, publicAddr, agentInstaller string) *Handler {
+	return &Handler{store: s, cmdBus: cmdBus, cfg: cfg, auth: auth, agentBinary: agentBinary, publicAddr: publicAddr, agentInstaller: agentInstaller}
 }
 
 // ── 登录 ──────────────────────────────────────────────────
