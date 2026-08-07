@@ -1,6 +1,7 @@
 package main
 import (
 	"context"
+	"crypto/tls"
 	"embed"
 	"encoding/json"
 	"flag"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 
 	pb "github.com/qux-bbb/baize/proto/gen/go/baize/v1"
 	"github.com/qux-bbb/baize/server/internal/api"
@@ -280,12 +282,25 @@ func main() {
 	authPath := filepath.Join(*dataDir, "auth.json")
 	authManager := api.NewAuthManager(authPath)
 
+	// TLS 证书（自动生成，Agent 需配置 ca 指向 data-dir 的 ca.crt）
+	certFile, keyFile, caFile, err := ensureTLS(*dataDir, *publicAddr)
+	if err != nil {
+		log.Fatalf("TLS 初始化失败: %v", err)
+	}
+	tlsCert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		log.Fatalf("加载 Server 证书失败: %v", err)
+	}
+
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
 	if err != nil {
 		log.Fatalf("监听端口 %d 失败: %v", *port, err)
 	}
 
-	s := grpc.NewServer()
+	s := grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{
+		Certificates: []tls.Certificate{tlsCert},
+		MinVersion:   tls.VersionTLS12,
+	})))
 	cmdBus := engine.NewCommandBus()
 	cfg := engine.NewConfigManager()
 	pb.RegisterBaizeServiceServer(s, &baizeServer{es: bleveStore, engine: eng, cmdBus: cmdBus, cfg: cfg})
@@ -294,7 +309,7 @@ func main() {
 	{
 		mux := http.NewServeMux()
 		if bleveStore != nil {
-			apiHandler := api.New(bleveStore, cmdBus, cfg, authManager, *agentBinary, *publicAddr, *agentInstaller)
+			apiHandler := api.New(bleveStore, cmdBus, cfg, authManager, *agentBinary, *publicAddr, *agentInstaller, caFile)
 			mux.HandleFunc("POST /api/login", apiHandler.Login)
 			mux.HandleFunc("POST /api/change-password", apiHandler.ChangePassword)
 			mux.HandleFunc("POST /api/logout", apiHandler.Logout)
@@ -341,8 +356,8 @@ func main() {
 			Handler: api.CORSMiddleware(api.AuthMiddleware(authManager)(mux)),
 		}
 		go func() {
-			log.Printf("[HTTP] Dashboard + API: http://localhost:%d", *httpPort)
-			if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("[HTTP] Dashboard + API: https://localhost:%d", *httpPort)
+			if err := httpSrv.ListenAndServeTLS(certFile, keyFile); err != nil && err != http.ErrServerClosed {
 				log.Printf("[HTTP] 错误: %v", err)
 			}
 		}()

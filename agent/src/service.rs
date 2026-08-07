@@ -102,22 +102,59 @@ pub fn install() -> Result<()> {
         account_password: None,
     };
 
-    let _service = manager
-        .create_service(&service_info, ServiceAccess::CHANGE_CONFIG)
-        .context("创建服务失败（需要管理员权限）")?;
-
-    info!("[Service] Baize Agent 服务已安装");
-    info!("[Service] 启动: net start baize-agent");
-    Ok(())
+    // 升级场景：旧服务刚被删除时同名服务处于"标记删除"状态
+    // （ERROR_SERVICE_MARKED_FOR_DELETE 1072），CreateService 会失败。
+    // 等待删除完成并重试（最长约 5 秒）。
+    let mut last_err: Option<anyhow::Error> = None;
+    for attempt in 0..10 {
+        match manager.create_service(&service_info, ServiceAccess::CHANGE_CONFIG) {
+            Ok(_s) => {
+                info!("[Service] Baize Agent 服务已安装");
+                info!("[Service] 启动: net start baize-agent");
+                return Ok(());
+            }
+            Err(e) => {
+                last_err = Some(anyhow::anyhow!("{:?}", e));
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                if attempt == 9 {
+                    break;
+                }
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("创建服务失败")))
 }
 
 pub fn uninstall() -> Result<()> {
     let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
         .context("打开服务管理器失败（需要管理员权限）")?;
 
-    let service = manager
-        .open_service("baize-agent", ServiceAccess::DELETE)
-        .context("打开服务失败（是否已安装？）")?;
+    // DeleteService 对运行中的服务不可靠，先尝试停止（服务已停止时忽略错误）
+    if let Ok(service) = manager.open_service("baize-agent", ServiceAccess::QUERY_STATUS | ServiceAccess::STOP) {
+        if let Ok(status) = service.query_status() {
+            if status.current_state != ServiceState::Stopped {
+                let _ = service.stop();
+                // 等待服务真正停止（最长 5 秒）
+                for _ in 0..10 {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    if let Ok(s) = service.query_status() {
+                        if s.current_state == ServiceState::Stopped {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 服务不存在 = 已卸载（幂等：升级/卸载时 RemoveExistingProducts 可能遇到服务已被删除）
+    let service = match manager.open_service("baize-agent", ServiceAccess::DELETE) {
+        Ok(s) => s,
+        Err(_) => {
+            info!("[Service] 服务不存在，视为已卸载");
+            return Ok(());
+        }
+    };
 
     service
         .delete()

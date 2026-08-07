@@ -31,14 +31,25 @@ if not exist "%WIX_BIN%\candle.exe" (
     exit /b 1
 )
 
-echo [1/2] 编译 Product.wxs ...
-"%WIX_BIN%\candle.exe" -arch x64 Product.wxs -d"AgentExe=%AGENT_EXE%"
+echo [1/3] 准备 TLS CA 证书 ...
+set "HAS_CA=no"
+if exist "%~dp0ca.crt" (
+    set "HAS_CA=yes"
+    echo   找到 ca.crt，MSI 将内置 TLS CA 证书
+    > "%~dp0agent.conf" echo {"server": "", "ca": "ca.crt", "watch_dirs": []}
+) else (
+    echo   未找到 ca.crt（TLS 模式需先拷贝 Server 生成的 ca.crt 到本目录）
+    > "%~dp0agent.conf" echo {"server": "", "ca": "", "watch_dirs": []}
+)
+
+echo [2/3] 编译 Product.wxs ...
+"%WIX_BIN%\candle.exe" -arch x64 Product.wxs -d"AgentExe=%AGENT_EXE%" -d"HasCaCrt=%HAS_CA%"
 if %errorlevel% neq 0 (
     echo [错误] candle 编译失败
     exit /b 1
 )
 
-echo [2/2] 链接生成 MSI ...
+echo [3/3] 链接生成 MSI ...
 "%WIX_BIN%\light.exe" Product.wixobj -ext "%WIX_BIN%\WixUtilExtension.dll" -o baize-agent.msi
 if %errorlevel% neq 0 (
     echo [错误] light 链接失败
@@ -48,7 +59,10 @@ if %errorlevel% neq 0 (
 echo.
 echo 构建完成: %~dp0baize-agent.msi
 echo.
-echo 静默安装示例:
-echo   msiexec /i "%~dp0baize-agent.msi" /q SERVER_ADDR="http://10.0.0.1:50051"
+echo 静默安装示例（TLS 模式，需已内置 ca.crt）:
+echo   msiexec /i "%~dp0baize-agent.msi" /q SERVER_ADDR="https://10.0.0.1:50051"
 echo 不带地址安装（装后手动编辑 agent.conf 配置）:
 echo   msiexec /i "%~dp0baize-agent.msi" /q
+echo.
+echo TLS 说明: ca.crt 由 Server 首次启动生成（server\data\ca.crt），
+echo          构建 MSI 前请拷贝到本目录（agent\wix\ca.crt）

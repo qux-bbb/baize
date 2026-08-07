@@ -17,7 +17,7 @@
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine"
              Description="Baize (白泽) EDR 终端检测与响应 Agent" />
 
-    <MajorUpgrade DowngradeErrorMessage="已安装更高版本的 Baize Agent。" />
+    <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="已安装更高版本的 Baize Agent。" />
     <MediaTemplate EmbedCab="yes" />
 
     <!-- SERVER_ADDR: Agent 连接的 Server gRPC 地址（如 http://10.0.0.1:50051）。
@@ -36,10 +36,17 @@
         <File Id="AgentExeFile" Source="$(var.AgentExe)" KeyPath="yes" />
       </Component>
 
-      <!-- 默认配置（server 空，由 CA 注入 SERVER_ADDR） -->
+      <!-- 默认配置（server 空，由 CA 注入 SERVER_ADDR；ca 由 build_msi.bat 按 ca.crt 是否存在生成） -->
       <Component Id="AgentConf" Guid="935e0e3a-130c-4942-b53d-2be963465168" Win64="yes">
         <File Id="AgentConfFile" Source="agent.conf" KeyPath="yes" />
       </Component>
+
+      <!-- TLS CA 证书（build_msi.bat 检测到 wix/ca.crt 时打包；Server 首次启动生成，构建前拷贝） -->
+      <?if $(var.HasCaCrt) = "yes" ?>
+      <Component Id="CaCrt" Guid="7d3f1a9c-4e58-4b0a-9c2e-6f8d1a5b3e71" Win64="yes">
+        <File Id="CaCrtFile" Source="ca.crt" KeyPath="yes" />
+      </Component>
+      <?endif?>
     </ComponentGroup>
 
     <!-- ── custom actions ──
@@ -86,6 +93,18 @@
                   Execute="deferred"
                   Impersonate="no"
                   Return="check" />
+    <!-- 卸载前先停服务：DeleteService 对运行中的服务不可靠（uninstall 子命令会失败）。
+         服务已停止时 net stop 报错，Return=ignore 忽略。 -->
+    <CustomAction Id="SetStopSvcCmd"
+                  Return="check"
+                  Property="RunStopSvcCmd"
+                  Value="&quot;[SystemFolder]net.exe&quot; stop baize-agent" />
+    <CustomAction Id="RunStopSvcCmd"
+                  BinaryKey="WixCA"
+                  DllEntry="WixQuietExec"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
 
     <InstallExecuteSequence>
       <Custom Action="SetWriteConfigCmd" Before="RunWriteConfigCmd">
@@ -94,14 +113,28 @@
       <Custom Action="RunWriteConfigCmd" After="InstallFiles">
         <![CDATA[SERVER_ADDR <> ""]]>
       </Custom>
-      <Custom Action="SetInstallSvcCmd" Before="RunInstallSvcCmd" />
-      <Custom Action="RunInstallSvcCmd" After="RunWriteConfigCmd" />
-      <Custom Action="SetStartSvcCmd" Before="RunStartSvcCmd" />
-      <Custom Action="RunStartSvcCmd" After="RunInstallSvcCmd" />
+      <Custom Action="SetInstallSvcCmd" Before="RunInstallSvcCmd">
+        <![CDATA[NOT REMOVE~="ALL"]]>
+      </Custom>
+      <Custom Action="RunInstallSvcCmd" After="RunWriteConfigCmd">
+        <![CDATA[NOT REMOVE~="ALL"]]>
+      </Custom>
+      <Custom Action="SetStartSvcCmd" Before="RunStartSvcCmd">
+        <![CDATA[NOT REMOVE~="ALL"]]>
+      </Custom>
+      <Custom Action="RunStartSvcCmd" After="RunInstallSvcCmd">
+        <![CDATA[NOT REMOVE~="ALL"]]>
+      </Custom>
       <Custom Action="SetUninstallSvcCmd" Before="RunUninstallSvcCmd">
         <![CDATA[REMOVE~="ALL"]]>
       </Custom>
       <Custom Action="RunUninstallSvcCmd" Before="RemoveFiles">
+        <![CDATA[REMOVE~="ALL"]]>
+      </Custom>
+      <Custom Action="SetStopSvcCmd" Before="RunStopSvcCmd">
+        <![CDATA[REMOVE~="ALL"]]>
+      </Custom>
+      <Custom Action="RunStopSvcCmd" Before="RunUninstallSvcCmd">
         <![CDATA[REMOVE~="ALL"]]>
       </Custom>
     </InstallExecuteSequence>

@@ -11,6 +11,7 @@ interface AgentInfo {
   installer_exists: boolean
   installer_size: number
   installer_sha256: string
+  tls_enabled?: boolean
 }
 
 export default function AgentDownload() {
@@ -101,6 +102,11 @@ export default function AgentDownload() {
       <div className="form-group">
         <label>Agent 将连接的 Server 地址</label>
         <input readOnly value={agentInfo?.public_addr || '（未配置 --public-addr，将按访问地址推断）'} />
+        {agentInfo?.tls_enabled && (
+          <div style={{ fontSize: '0.75rem', color: '#22c55e', marginTop: '0.25rem' }}>
+            🔒 TLS 已启用（安装包内置 ca.crt，Agent 将使用 https:// 加密连接）
+          </div>
+        )}
       </div>
 
       <div className="form-group">

@@ -18,6 +18,10 @@ agent/target/
 agent/wix/*.msi
 agent/wix/*.wixobj
 agent/wix/*.wixpdb
+# TLS CA 证书（Server 生成后拷贝进来，构建输入不提交）
+agent/wix/ca.crt
+# agent.conf 由 build_msi.bat 生成（检测 ca.crt 决定 ca 字段）
+agent/wix/agent.conf
 
 # IDE
 .vscode/

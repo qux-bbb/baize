@@ -101,7 +101,7 @@ func (am *AuthManager) initDefault() {
 
 	log.Println("═══════════════════════════════════════════════")
 	log.Println("  Baize (白泽) EDR 首次启动！")
-	log.Println("  Dashboard:   http://localhost:8080")
+	log.Println("  Dashboard:   https://localhost:8080")
 	log.Printf("  用户名:      %s", am.cfg.Username)
 	log.Printf("  密码:        %s", password)
 	log.Println("  ⚠ 请立即登录并修改密码")

@@ -297,7 +297,7 @@ pub async fn run_agent_loop(
             info!("收到停止请求，Agent 退出");
             break;
         }
-        match run(&server, agent_info.clone(), &sys, interval_secs, &watch_str).await {
+        match run(&server, agent_info.clone(), &sys, interval_secs, &watch_str, cfg.ca.clone()).await {
             Ok(()) => {
                 info!("连接正常结束，5 秒后重连...");
                 time::sleep(Duration::from_secs(5)).await;
@@ -334,15 +334,41 @@ fn get_default_watch_dirs() -> Vec<String> {
     }
 }
 
+// 解析 CA 证书路径：相对路径按 exe 同目录解析（安装场景 agent.conf 与 ca.crt 同在安装目录）
+fn resolve_ca_path(p: &str) -> std::path::PathBuf {
+    let pb = std::path::PathBuf::from(p);
+    if pb.is_absolute() {
+        return pb;
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            return dir.join(pb);
+        }
+    }
+    pb
+}
+
 async fn run(
     server: &str,
     agent_info: AgentInfo,
     system: &Arc<tokio::sync::Mutex<System>>,
     interval_secs: u64,
     watch: &str,
+    ca: Option<String>,
 ) -> Result<()> {
-    let endpoint = Endpoint::from_shared(server.to_string())
-        .context("无效的 Server 地址")?;
+    // TLS：server 为 https:// 时启用（ca 指向 CA 证书，相对路径按 exe 同目录解析）
+    let mut endpoint = Endpoint::from_shared(server.to_string()).context("无效的 Server 地址")?;
+    if server.starts_with("https://") {
+        let ca_val = ca.as_deref().filter(|s| !s.is_empty()).ok_or_else(|| {
+            anyhow::anyhow!("Server 地址为 https://，但 agent.conf 未配置 ca（TLS CA 证书路径）")
+        })?;
+        let ca_path = resolve_ca_path(ca_val);
+        let ca_pem = std::fs::read(&ca_path).with_context(|| format!("读取 CA 证书失败: {}", ca_path.display()))?;
+        let tls = tonic::transport::ClientTlsConfig::new()
+            .ca_certificate(tonic::transport::Certificate::from_pem(ca_pem));
+        endpoint = endpoint.tls_config(tls).context("TLS 配置失败")?;
+        info!("已启用 TLS，CA: {}", ca_path.display());
+    }
     let channel = endpoint.connect().await.context("连接 Server 失败")?;
     let mut client = BaizeServiceClient::new(channel);
     info!("已连接到 Server: {}", server);

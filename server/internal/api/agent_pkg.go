@@ -38,14 +38,16 @@ type AgentInfo struct {
 	InstallerExists bool   `json:"installer_exists"`  // MSI 是否就绪
 	InstallerSize   int64  `json:"installer_size"`    // 字节
 	InstallerSHA256 string `json:"installer_sha256"`  // MSI SHA256
+	TLSEnabled      bool   `json:"tls_enabled"`       // 是否启用 TLS（ca.crt 就绪，注入包含 ca）
 }
 
 // AgentInfo 返回下载页所需的打包信息（GET /api/agent/info）
 func (h *Handler) AgentInfo(w http.ResponseWriter, r *http.Request) {
 	info := AgentInfo{
-		PublicAddr:    h.resolvePublicAddr(r),
+		PublicAddr:    h.agentServerAddr(h.resolvePublicAddr(r)),
 		AgentBinary:   h.agentBinary,
 		InstallerPath: h.agentInstaller,
+		TLSEnabled:    h.caFile != "",
 	}
 	if h.agentBinary != "" {
 		if fi, err := os.Stat(h.agentBinary); err == nil && !fi.IsDir() {
@@ -82,16 +84,20 @@ func (h *Handler) AgentPackage(w http.ResponseWriter, r *http.Request) {
 	}
 	defer exe.Close()
 
-	serverAddr := h.resolvePublicAddr(r)
+	serverAddr := h.agentServerAddr(h.resolvePublicAddr(r))
 	if serverAddr == "" {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "无法确定 Server 对外地址，请配置 --public-addr"})
 		return
 	}
 
-	// 动态生成 agent.conf（ca 字段预留，TLS 上线后填充）
+	// 动态生成 agent.conf（TLS 启用时 server 用 https:// + ca 指向包内 ca.crt）
+	ca := ""
+	if h.caFile != "" {
+		ca = "ca.crt"
+	}
 	conf, _ := json.MarshalIndent(map[string]interface{}{
 		"server":     serverAddr,
-		"ca":         "",
+		"ca":         ca,
 		"watch_dirs": []string{},
 	}, "", "  ")
 
@@ -118,12 +124,29 @@ func (h *Handler) AgentPackage(w http.ResponseWriter, r *http.Request) {
 		zw.Close()
 		return
 	}
+	if h.caFile != "" {
+		caData, err := os.ReadFile(h.caFile)
+		if err != nil {
+			zw.Close()
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "读取 CA 证书失败: " + err.Error()})
+			return
+		}
+		if err := addZipBytes(zw, "ca.crt", caData); err != nil {
+			zw.Close()
+			return
+		}
+	}
 
 	// SHA256SUMS.txt：安装前可校验文件完整性
 	exeSum, _ := fileSHA256(h.agentBinary)
 	shaLines := fmt.Sprintf("baize-agent.exe  %s\n", exeSum)
 	shaLines += fmt.Sprintf("agent.conf       %s\n", sha256hex(conf))
 	shaLines += fmt.Sprintf("install.bat      %s\n", sha256hex(installBat))
+	if h.caFile != "" {
+		if caSum, err := fileSHA256(h.caFile); err == nil {
+			shaLines += fmt.Sprintf("ca.crt           %s\n", caSum)
+		}
+	}
 	_ = addZipBytes(zw, "SHA256SUMS.txt", []byte(shaLines))
 
 	if err := zw.Close(); err != nil {
@@ -154,6 +177,15 @@ func (h *Handler) AgentInstaller(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", fi.Size()))
 	http.ServeContent(w, r, filename, fi.ModTime(), f)
+}
+
+// agentServerAddr: TLS 启用时把注入地址的 http:// 转 https://
+// （Agent 侧根据 server 前缀决定是否启用 TLS，ca 指向包内 ca.crt）
+func (h *Handler) agentServerAddr(addr string) string {
+	if h.caFile == "" || !strings.HasPrefix(addr, "http://") {
+		return addr
+	}
+	return "https://" + strings.TrimPrefix(addr, "http://")
 }
 
 // resolvePublicAddr 确定 agent.conf 注入的 Server 地址：

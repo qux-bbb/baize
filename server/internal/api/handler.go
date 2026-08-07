@@ -26,10 +26,12 @@ type Handler struct {
 	publicAddr string
 	// agentInstaller: 预构建的 MSI 安装包路径（--agent-installer），直接下发
 	agentInstaller string
+	// caFile: TLS CA 证书路径（data-dir/ca.crt），注入下载包（zip 内置 ca.crt，agent.conf ca 字段）
+	caFile string
 }
 
-func New(s *store.Store, cmdBus *engine.CommandBus, cfg *engine.ConfigManager, auth *AuthManager, agentBinary, publicAddr, agentInstaller string) *Handler {
-	return &Handler{store: s, cmdBus: cmdBus, cfg: cfg, auth: auth, agentBinary: agentBinary, publicAddr: publicAddr, agentInstaller: agentInstaller}
+func New(s *store.Store, cmdBus *engine.CommandBus, cfg *engine.ConfigManager, auth *AuthManager, agentBinary, publicAddr, agentInstaller, caFile string) *Handler {
+	return &Handler{store: s, cmdBus: cmdBus, cfg: cfg, auth: auth, agentBinary: agentBinary, publicAddr: publicAddr, agentInstaller: agentInstaller, caFile: caFile}
 }
 
 // ── 登录 ──────────────────────────────────────────────────
