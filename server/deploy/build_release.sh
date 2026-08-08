@@ -27,8 +27,12 @@ echo "=================================================="
 
 # [1/4] 交叉编译
 echo "[1/4] 交叉编译 (linux-amd64 / windows-amd64)..."
-GOOS=linux GOARCH=amd64 go build -o "$RELEASE/baize-server" ./cmd/
-GOOS=windows GOARCH=amd64 go build -o "$RELEASE/baize-server.exe" ./cmd/
+# cd $ROOT + 相对 -o：go 是 Windows 原生程序，不认 MSYS 的 /d/... 路径（变量拼接后不转换），
+#     曾出现发布包内置旧前端（go build 输出到无效路径，cp 静默拷了旧二进制）
+# -a 强制全量重建：go 构建缓存可能未感知 cmd/web（go:embed）内容变化
+cd "$ROOT"
+GOOS=linux GOARCH=amd64 go build -a -o release/baize-server ./cmd/
+GOOS=windows GOARCH=amd64 go build -a -o release/baize-server.exe ./cmd/
 
 # [2/4] Linux tar.gz
 echo "[2/4] 打包 Linux..."
@@ -38,8 +42,7 @@ cp "$RELEASE/baize-server" "$PKG_LINUX/"
 cp "$ROOT/deploy/install_server.sh" "$PKG_LINUX/"
 cp "$ROOT/deploy/README.md" "$PKG_LINUX/"
 # 附带 baize-agent.exe：install_server.sh [3/7] 自动拷到 agent-files → Server zip 下载即用（零手动）
-# 注意：Windows git-bash 下 `[[ -f "D:/..." ]]` 不认盘符路径，用相对路径判断（基于 $ROOT）
-cd "$ROOT"
+# 注意：Windows git-bash 下 `[[ -f "D:/..." ]]` 不认盘符路径，用相对路径判断（[1/4] 已 cd $ROOT）
 AGENT_EXE="../agent/target/debug/baize-agent.exe"
 if [[ -f "$AGENT_EXE" ]]; then
   cp "$AGENT_EXE" "$PKG_LINUX/"
