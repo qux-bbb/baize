@@ -1,11 +1,11 @@
 @echo off
-chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
 
 REM ═══════════════════════════════════════════════════════════
 REM  Baize Agent MSI 构建脚本（WiX 3.14）
-REM  用法: build_msi.bat [baize-agent.exe 路径]
+REM  用法: build_msi.bat [baize-agent.exe 路径] [SERVER_ADDR]
+REM        SERVER_ADDR 可选（如 https://10.0.0.1:50051），内置进 agent.conf → MSI 双击即装
 REM  默认使用 ..\..\target\debug\baize-agent.exe
 REM  WiX 工具链: 环境变量 WIX_BIN 指向 candle.exe 所在目录
 REM              （默认 %USERPROFILE%\wix314\bin314）
@@ -14,6 +14,7 @@ REM  安装: msiexec /i baize-agent.msi /q SERVER_ADDR="http://10.0.0.1:50051"
 REM ═══════════════════════════════════════════════════════════
 
 set "AGENT_EXE=%~1"
+set "SERVER_ADDR=%~2"
 if "%AGENT_EXE%"=="" set "AGENT_EXE=..\target\debug\baize-agent.exe"
 
 set "WIX_BIN=%WIX_BIN%"
@@ -33,13 +34,14 @@ if not exist "%WIX_BIN%\candle.exe" (
 
 echo [1/3] 准备 TLS CA 证书 ...
 set "HAS_CA=no"
+set "SERVER_VAL=%SERVER_ADDR%"
 if exist "%~dp0ca.crt" (
     set "HAS_CA=yes"
     echo   找到 ca.crt，MSI 将内置 TLS CA 证书
-    > "%~dp0agent.conf" echo {"server": "", "ca": "ca.crt", "watch_dirs": []}
+    > "%~dp0agent.conf" echo {"server": "%SERVER_VAL%", "ca": "ca.crt", "watch_dirs": []}
 ) else (
     echo   未找到 ca.crt（TLS 模式需先拷贝 Server 生成的 ca.crt 到本目录）
-    > "%~dp0agent.conf" echo {"server": "", "ca": "", "watch_dirs": []}
+    > "%~dp0agent.conf" echo {"server": "%SERVER_VAL%", "ca": "", "watch_dirs": []}
 )
 
 echo [2/3] 编译 Product.wxs ...
@@ -59,10 +61,10 @@ if %errorlevel% neq 0 (
 echo.
 echo 构建完成: %~dp0baize-agent.msi
 echo.
-echo 静默安装示例（TLS 模式，需已内置 ca.crt）:
+echo 内置地址模式（构建时传了 SERVER_ADDR，双击/静默直接连）:
+echo   baize-agent.msi 双击安装即可
+echo 批量模式（传 SERVER_ADDR 覆盖内置地址）:
 echo   msiexec /i "%~dp0baize-agent.msi" /q SERVER_ADDR="https://10.0.0.1:50051"
-echo 不带地址安装（装后手动编辑 agent.conf 配置）:
-echo   msiexec /i "%~dp0baize-agent.msi" /q
 echo.
 echo TLS 说明: ca.crt 由 Server 首次启动生成（server\data\ca.crt），
 echo          构建 MSI 前请拷贝到本目录（agent\wix\ca.crt）

@@ -1,6 +1,5 @@
 @echo off
-chcp 65001 >nul
-setlocal
+setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
 echo ============================================
@@ -8,13 +7,16 @@ echo  Baize Agent 安装程序
 echo ============================================
 echo.
 
-REM ── 1. 检查管理员权限 ──
+REM ── 1. 自动请求管理员权限（非管理员时 UAC 提升自身重跑）──
 net session >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [错误] 请以管理员身份运行本脚本！
-    echo        右键点击 install.bat → 以管理员身份运行
-    pause
-    exit /b 1
+    echo 需要管理员权限，正在请求提升...
+    powershell -Command "Start-Process -FilePath '%~f0' -Verb RunAs" >nul 2>&1
+    if !errorlevel! neq 0 (
+        echo [错误] 未能获取管理员权限，请右键选择"以管理员身份运行"
+        pause
+    )
+    exit /b
 )
 
 REM ── 2. 检查安装文件是否齐全 ──
