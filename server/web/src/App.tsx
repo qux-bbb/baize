@@ -199,45 +199,23 @@ export default function App() {
     } catch { setErr('加载告警详情失败') }
   }
 
-  // 导出：带 token 请求导出端点，拿 blob 触发浏览器下载
-  async function doExport(kind: 'events' | 'alerts') {
+  // 导出：导航式下载（浏览器原生下载；Firefox 对 fetch+blob+a.click 的异步下载支持不可靠），
+  // token 经 URL query 传递（仅下载端点支持，短时有效）
+  function doExport(kind: 'events' | 'alerts') {
     setExporting(true)
-    try {
-      const params = new URLSearchParams()
-      if (kind === 'events') {
-        if ((route as any).host) params.set('hostname', (route as any).host)
-        if ((route as any).q) params.set('q', (route as any).q)
-      }
-      const qs = params.toString()
-      const r = await fetch(`${API}/export/${kind}${qs ? '?' + qs : ''}`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || ''}` }
-      })
-      if (r.status === 401) {
-        clearAuth()
-        window.dispatchEvent(new CustomEvent('baize-auth', { detail: 'unauthorized' }))
-        throw new Error('登录已过期，请重新登录')
-      }
-      if (!r.ok) {
-        const d = await r.json().catch(() => ({}))
-        throw new Error((d as any).error || `导出失败 (${r.status})`)
-      }
-      const blob = await r.blob()
-      const cd = r.headers.get('Content-Disposition') || ''
-      const m = cd.match(/filename="?([^";]+)"?/)
-      const filename = m ? m[1] : `${kind}_${Date.now()}.csv`
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = filename
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      URL.revokeObjectURL(url)
-    } catch (e: any) {
-      setErr(e.message)
-    } finally {
-      setExporting(false)
+    const params = new URLSearchParams()
+    if (kind === 'events') {
+      if ((route as any).host) params.set('hostname', (route as any).host)
+      if ((route as any).q) params.set('q', (route as any).q)
     }
+    const qs = params.toString()
+    const token = localStorage.getItem('token') || ''
+    const a = document.createElement('a')
+    a.href = `${API}/export/${kind}?token=${encodeURIComponent(token)}${qs ? '&' + qs : ''}`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => setExporting(false), 1500)
   }
 
   const host = route.page === 'host-detail' ? hosts.find(h => h.agent_id === route.agentId) : null

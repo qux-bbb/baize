@@ -1,85 +1,84 @@
 @echo off
-chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
 
 echo ============================================
-echo  Baize EDR Agent å®‰è£…ç¨‹åº
+echo  Baize EDR Agent °²×°³ÌĞò
 echo ============================================
 echo.
 
-REM â”€â”€ 1. æ£€æŸ¥ç®¡ç†å‘˜æƒé™ â”€â”€
+REM ©¤©¤ 1. ¼ì²é¹ÜÀíÔ±È¨ÏŞ ©¤©¤
 net session >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [é”™è¯¯] è¯·ä»¥ç®¡ç†å‘˜èº«ä»½è¿è¡Œæœ¬è„šæœ¬ï¼
-    echo        å³é”®ç‚¹å‡» install.bat â†’ ä»¥ç®¡ç†å‘˜èº«ä»½è¿è¡Œ
+    echo [´íÎó] ÇëÒÔ¹ÜÀíÔ±Éí·İÔËĞĞ±¾½Å±¾£¡
+    echo        ÓÒ¼üµã»÷ install.bat ¡ú ÒÔ¹ÜÀíÔ±Éí·İÔËĞĞ
     pause
     exit /b 1
 )
 
-REM â”€â”€ 2. æ£€æŸ¥å®‰è£…æ–‡ä»¶æ˜¯å¦é½å…¨ â”€â”€
+REM ©¤©¤ 2. ¼ì²é°²×°ÎÄ¼şÊÇ·ñÆëÈ« ©¤©¤
 if not exist "baize-agent.exe" (
-    echo [é”™è¯¯] æœªæ‰¾åˆ° baize-agent.exeï¼Œè¯·ç¡®è®¤å®‰è£…åŒ…å®Œæ•´
+    echo [´íÎó] Î´ÕÒµ½ baize-agent.exe£¬ÇëÈ·ÈÏ°²×°°üÍêÕû
     pause
     exit /b 1
 )
 if not exist "agent.conf" (
-    echo [è­¦å‘Š] æœªæ‰¾åˆ° agent.confï¼Œå°†ä½¿ç”¨é»˜è®¤é…ç½®ï¼ˆè¿æ¥ 127.0.0.1:50051ï¼‰
+    echo [¾¯¸æ] Î´ÕÒµ½ agent.conf£¬½«Ê¹ÓÃÄ¬ÈÏÅäÖÃ£¨Á¬½Ó 127.0.0.1:50051£©
 )
 
-REM â”€â”€ 3. æ£€æŸ¥æœåŠ¡æ˜¯å¦å·²å®‰è£… â”€â”€
+REM ©¤©¤ 3. ¼ì²é·şÎñÊÇ·ñÒÑ°²×° ©¤©¤
 sc query baize-agent >nul 2>&1
 if %errorlevel% equ 0 (
-    echo [é”™è¯¯] baize-agent æœåŠ¡å·²å­˜åœ¨ã€‚
-    echo        å¦‚éœ€é‡æ–°å®‰è£…ï¼Œè¯·å…ˆæ‰§è¡Œ: sc delete baize-agent
+    echo [´íÎó] baize-agent ·şÎñÒÑ´æÔÚ¡£
+    echo        ÈçĞèÖØĞÂ°²×°£¬ÇëÏÈÖ´ĞĞ: sc delete baize-agent
     pause
     exit /b 1
 )
 
-REM â”€â”€ 4. æ‹·è´æ–‡ä»¶åˆ°å®‰è£…ç›®å½• â”€â”€
+REM ©¤©¤ 4. ¿½±´ÎÄ¼şµ½°²×°Ä¿Â¼ ©¤©¤
 set "INSTALL_DIR=%ProgramFiles%\Baize"
 if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
 copy /Y "baize-agent.exe" "%INSTALL_DIR%\" >nul
 if %errorlevel% neq 0 (
-    echo [é”™è¯¯] æ‹·è´ baize-agent.exe å¤±è´¥
+    echo [´íÎó] ¿½±´ baize-agent.exe Ê§°Ü
     pause
     exit /b 1
 )
 if exist "agent.conf" copy /Y "agent.conf" "%INSTALL_DIR%\" >nul
-echo [OK] æ–‡ä»¶å·²å®‰è£…åˆ° %INSTALL_DIR%
+echo [OK] ÎÄ¼şÒÑ°²×°µ½ %INSTALL_DIR%
 
-REM â”€â”€ 5. å¯ç”¨è¿›ç¨‹åˆ›å»ºå®¡è®¡ï¼ˆ4688ï¼Œåªéœ€ä¸€æ¬¡ï¼‰ â”€â”€
+REM ©¤©¤ 5. ÆôÓÃ½ø³Ì´´½¨Éó¼Æ£¨4688£¬Ö»ĞèÒ»´Î£© ©¤©¤
 auditpol /set /subcategory:{0CCE922B-69AE-11D9-BED3-505054503030} /success:enable >nul 2>&1
 if %errorlevel% equ 0 (
-    echo [OK] è¿›ç¨‹åˆ›å»ºå®¡è®¡å·²å¯ç”¨ï¼ˆ4688ï¼‰
+    echo [OK] ½ø³Ì´´½¨Éó¼ÆÒÑÆôÓÃ£¨4688£©
 ) else (
-    echo [è­¦å‘Š] å¯ç”¨è¿›ç¨‹å®¡è®¡å¤±è´¥ï¼Œå¯ç¨åæ‰‹åŠ¨æ‰§è¡Œ auditpol å‘½ä»¤
+    echo [¾¯¸æ] ÆôÓÃ½ø³ÌÉó¼ÆÊ§°Ü£¬¿ÉÉÔºóÊÖ¶¯Ö´ĞĞ auditpol ÃüÁî
 )
 
-REM â”€â”€ 6. å®‰è£…å¹¶å¯åŠ¨æœåŠ¡ â”€â”€
+REM ©¤©¤ 6. °²×°²¢Æô¶¯·şÎñ ©¤©¤
 cd /d "%INSTALL_DIR%"
 baize-agent.exe --install
 if %errorlevel% neq 0 (
-    echo [é”™è¯¯] æœåŠ¡å®‰è£…å¤±è´¥
+    echo [´íÎó] ·şÎñ°²×°Ê§°Ü
     pause
     exit /b 1
 )
-echo [OK] æœåŠ¡å·²å®‰è£…
+echo [OK] ·şÎñÒÑ°²×°
 
 net start baize-agent
 if %errorlevel% neq 0 (
-    echo [é”™è¯¯] æœåŠ¡å¯åŠ¨å¤±è´¥ï¼Œè¯·æŸ¥çœ‹æ—¥å¿—: %ProgramData%\Baize\agent.log
+    echo [´íÎó] ·şÎñÆô¶¯Ê§°Ü£¬Çë²é¿´ÈÕÖ¾: %ProgramData%\Baize\agent.log
     pause
     exit /b 1
 )
 
 echo.
-echo â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-echo  Baize Agent å®‰è£…å®Œæˆï¼
-echo   - æœåŠ¡åç§° : baize-agent
-echo   - å®‰è£…ç›®å½• : %INSTALL_DIR%
-echo   - é…ç½®æ–‡ä»¶ : %INSTALL_DIR%\agent.conf
-echo   - æ—¥å¿—æ–‡ä»¶ : %ProgramData%\Baize\agent.log
-echo   - å¸è½½å‘½ä»¤ : sc stop baize-agent ^&^& sc delete baize-agent
-echo â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+echo ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T
+echo  Baize Agent °²×°Íê³É£¡
+echo   - ·şÎñÃû³Æ : baize-agent
+echo   - °²×°Ä¿Â¼ : %INSTALL_DIR%
+echo   - ÅäÖÃÎÄ¼ş : %INSTALL_DIR%\agent.conf
+echo   - ÈÕÖ¾ÎÄ¼ş : %ProgramData%\Baize\agent.log
+echo   - Ğ¶ÔØÃüÁî : sc stop baize-agent ^&^& sc delete baize-agent
+echo ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T
 pause

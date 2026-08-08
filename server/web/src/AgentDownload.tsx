@@ -23,76 +23,30 @@ export default function AgentDownload() {
     fetchJSON<AgentInfo>(`${API}/agent/info`).then(setAgentInfo).catch(() => setAgentMsg('加载 Agent 信息失败'))
   }, [])
 
-  const downloadAgent = async () => {
+  const downloadAgent = () => {
+    // 导航式下载：浏览器原生下载机制（Firefox 对 fetch+blob+a.click 的异步下载支持不可靠）。
+    // token 经 URL query 传递（仅下载端点支持，短时有效）。
     setDownloading(true)
-    setAgentMsg('')
-    try {
-      const r = await fetch(`${API}/agent/package`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || ''}` }
-      })
-      if (r.status === 401) {
-        clearAuth()
-        window.dispatchEvent(new CustomEvent('baize-auth', { detail: 'unauthorized' }))
-        throw new Error('登录已过期，请重新登录')
-      }
-      if (!r.ok) {
-        const d = await r.json().catch(() => ({}))
-        throw new Error((d as any).error || `下载失败 (${r.status})`)
-      }
-      const blob = await r.blob()
-      const cd = r.headers.get('Content-Disposition') || ''
-      const m = cd.match(/filename="?([^";]+)"?/)
-      const filename = m ? m[1] : `baize-agent_${Date.now()}.zip`
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = filename
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      URL.revokeObjectURL(url)
-      setAgentMsg('安装包已下载，请拷贝到目标终端解压后以管理员身份运行 install.bat')
-    } catch (e: any) {
-      setAgentMsg(e.message)
-    } finally {
-      setDownloading(false)
-    }
+    const token = localStorage.getItem('token') || ''
+    const a = document.createElement('a')
+    a.href = `${API}/agent/package?token=${encodeURIComponent(token)}`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setAgentMsg('下载已开始，请在浏览器下载中查看；若未保存请检查浏览器下载设置')
+    setTimeout(() => setDownloading(false), 1500)
   }
 
-  const downloadInstaller = async () => {
+  const downloadInstaller = () => {
     setDownloading(true)
-    setAgentMsg('')
-    try {
-      const r = await fetch(`${API}/agent/installer`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || ''}` }
-      })
-      if (r.status === 401) {
-        clearAuth()
-        window.dispatchEvent(new CustomEvent('baize-auth', { detail: 'unauthorized' }))
-        throw new Error('登录已过期，请重新登录')
-      }
-      if (!r.ok) {
-        const d = await r.json().catch(() => ({}))
-        throw new Error((d as any).error || `下载失败 (${r.status})`)
-      }
-      const blob = await r.blob()
-      const cd = r.headers.get('Content-Disposition') || ''
-      const m = cd.match(/filename="?([^";]+)"?/)
-      const filename = m ? m[1] : 'baize-agent.msi'
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = filename
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      URL.revokeObjectURL(url)
-      setAgentMsg('MSI 已下载。批量部署: msiexec /i baize-agent.msi /q SERVER_ADDR="<替换为你的地址>"')
-    } catch (e: any) {
-      setAgentMsg(e.message)
-    } finally {
-      setDownloading(false)
-    }
+    const token = localStorage.getItem('token') || ''
+    const a = document.createElement('a')
+    a.href = `${API}/agent/installer?token=${encodeURIComponent(token)}`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setAgentMsg('下载已开始。批量部署: msiexec /i baize-agent.msi /q SERVER_ADDR="<替换为你的地址>"')
+    setTimeout(() => setDownloading(false), 1500)
   }
 
   return (

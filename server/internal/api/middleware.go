@@ -8,6 +8,16 @@ import (
 	"strings"
 )
 
+// isDownloadPath 判断是否为允许 ?token= 鉴权的下载类端点
+// （仅下载端点支持 query token，避免 token 在 URL 中被广泛暴露）
+func isDownloadPath(path string) bool {
+	switch path {
+	case "/api/agent/package", "/api/agent/installer", "/api/export/events", "/api/export/alerts":
+		return true
+	}
+	return false
+}
+
 // AuthMiddleware 返回 HTTP 中间件，校验 API 请求的 JWT 认证
 //
 // 规则：
@@ -31,13 +41,19 @@ func AuthMiddleware(am *AuthManager) func(http.Handler) http.Handler {
 				return
 			}
 
-			// 提取 Bearer token
+			// 提取 token：优先 Authorization 头；
+			// 下载类端点支持 ?token=（浏览器导航式下载无法自定义 header，token 短时有效）
 			authHeader := r.Header.Get("Authorization")
-			if !strings.HasPrefix(authHeader, "Bearer ") {
+			token := ""
+			if strings.HasPrefix(authHeader, "Bearer ") {
+				token = strings.TrimPrefix(authHeader, "Bearer ")
+			} else if isDownloadPath(path) {
+				token = r.URL.Query().Get("token")
+			}
+			if token == "" {
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 				return
 			}
-			token := strings.TrimPrefix(authHeader, "Bearer ")
 
 			username, mustChangePwd, err := am.VerifyToken(token)
 			if err != nil {

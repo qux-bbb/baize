@@ -42,6 +42,8 @@ node_modules
 server/web/node_modules
 server/web/dist
 server/cmd/web
+# Server 构建产物（release 包/二进制，可重建）
+server/release/
 
 tmp.txt
 data/

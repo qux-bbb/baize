@@ -1,0 +1,27 @@
+[Unit]
+Description=Baize (白泽) EDR Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=baize
+Group=baize
+WorkingDirectory=/opt/baize
+# --public-addr 必须替换为 Server 机器的局域网 IP（Agent 连接与证书 SAN 都依赖它）
+ExecStart=/opt/baize/baize-server \
+  --data-dir /opt/baize/data \
+  --public-addr http://192.168.1.10:50051 \
+  --agent-binary /opt/baize/agent-files/baize-agent.exe \
+  --agent-installer /opt/baize/agent-files/baize-agent.msi
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectHome=true
+PrivateTmp=true
+# 系统目录只读，仅 data 目录可写（证书/Bleve/auth.json 都在 data 下）
+ProtectSystem=strict
+ReadWritePaths=/opt/baize/data
+
+[Install]
+WantedBy=multi-user.target
