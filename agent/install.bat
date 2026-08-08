@@ -46,6 +46,11 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 if exist "agent.conf" copy /Y "agent.conf" "%INSTALL_DIR%\" >nul
+REM -- CA 证书（TLS 必须，缺失时连接失败）--
+if exist "ca.crt" copy /Y "ca.crt" "%INSTALL_DIR%\" >nul
+if not exist "%INSTALL_DIR%\ca.crt" (
+    echo [警告] 未找到 ca.crt，TLS 连接将失败（请从 Server 下载页重新获取完整包）
+)
 echo [OK] 文件已安装到 %INSTALL_DIR%
 
 REM ── 5. 启用进程创建审计（4688，只需一次） ──
