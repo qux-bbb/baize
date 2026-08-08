@@ -300,16 +300,34 @@ pub async fn run_agent_loop(
         match run(&server, agent_info.clone(), &sys, interval_secs, &watch_str, cfg.ca.clone()).await {
             Ok(()) => {
                 info!("连接正常结束，5 秒后重连...");
-                time::sleep(Duration::from_secs(5)).await;
+                if sleep_interruptible(Duration::from_secs(5)).await {
+                    info!("停止请求打断重连等待");
+                    break;
+                }
             }
             Err(e) => {
                 error!("连接错误: {:?}，15 秒后重试...", e);
-                time::sleep(Duration::from_secs(15)).await;
+                if sleep_interruptible(Duration::from_secs(15)).await {
+                    info!("停止请求打断重试等待");
+                    break;
+                }
             }
         }
     }
 
     Ok(())
+}
+
+/// 睡眠期间可被停止请求打断（服务停止时无需等满 sleep 窗口）
+async fn sleep_interruptible(d: Duration) -> bool {
+    tokio::select! {
+        _ = time::sleep(d) => false,
+        _ = async {
+            while !stop_requested() {
+                time::sleep(Duration::from_millis(100)).await;
+            }
+        } => true,
+    }
 }
 
 /// 获取默认文件监控目录（按平台区分）
