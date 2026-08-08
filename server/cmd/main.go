@@ -373,7 +373,7 @@ func main() {
 	}()
 
 	log.Printf("═══════════════════════════════════════════")
-	log.Printf("  Baize (白泽) EDR Server")
+	log.Printf("  Baize (白泽) Server")
 	log.Printf("  gRPC 端口: %d", *port)
 	log.Printf("  存储: %s", storePath)
 	log.Printf("  检测引擎:  %d 条规则已加载", eng.RuleCount())

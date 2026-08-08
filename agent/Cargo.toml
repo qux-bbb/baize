@@ -2,7 +2,7 @@
 name = "baize-agent"
 version = "0.1.0"
 edition = "2021"
-description = "Baize (白泽) EDR - Rust Agent"
+description = "Baize (白泽) - Rust Agent"
 
 [dependencies]
 tonic = { version = "0.12", features = ["tls"] }

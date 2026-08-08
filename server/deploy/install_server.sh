@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# Baize (白泽) EDR Server 一键安装脚本（Linux + systemd）
+# Baize (白泽) Server 一键安装脚本（Linux + systemd）
 #
 # 用法:
 #   sudo ./install_server.sh --public-addr 192.168.1.10
@@ -59,7 +59,7 @@ if [[ ! -f "$BINARY" ]]; then
 fi
 
 echo "=================================================="
-echo " Baize (白泽) EDR Server 安装"
+echo " Baize (白泽) Server 安装"
 echo " public-addr: $PUBLIC_ADDR | gRPC: $PORT | HTTPS: $HTTP_PORT"
 echo " 数据目录: $DATA_DIR | Agent 分发目录: $AGENT_DIR"
 echo "=================================================="
@@ -94,7 +94,7 @@ echo "[4/7] 生成 systemd 单元..."
 mkdir -p "/etc/systemd/system"
 cat > "/etc/systemd/system/$SERVICE_NAME.service" <<EOF
 [Unit]
-Description=Baize (白泽) EDR Server
+Description=Baize (白泽) Server
 After=network-online.target
 Wants=network-online.target
 
@@ -153,7 +153,7 @@ PASSWORD=$(journalctl -u "$SERVICE_NAME" --since "3 min ago" --no-pager 2>/dev/n
 
 echo ""
 echo "══════════════════════════════════════════════════"
-echo "  Baize (白泽) EDR Server 安装完成"
+echo "  Baize (白泽) Server 安装完成"
 echo "  Dashboard:  https://$PUBLIC_ADDR:$HTTP_PORT"
 echo "  gRPC:       $PUBLIC_ADDR:$PORT"
 if [[ -n "$PASSWORD" ]]; then

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# Baize (白泽) EDR Server 发布包构建脚本（本地打包先行版）
+# Baize (白泽) Server 发布包构建脚本（本地打包先行版）
 #
 # 用法:
 #   ./build_release.sh            # 版本号默认 0.1.0
@@ -30,13 +30,23 @@ echo "[1/4] 交叉编译 (linux-amd64 / windows-amd64)..."
 GOOS=linux GOARCH=amd64 go build -o "$RELEASE/baize-server" ./cmd/
 GOOS=windows GOARCH=amd64 go build -o "$RELEASE/baize-server.exe" ./cmd/
 
-# [2/4] Linux tar.gz（含一键安装脚本）
+# [2/4] Linux tar.gz
 echo "[2/4] 打包 Linux..."
 PKG_LINUX="$RELEASE/pkg-linux/baize-server-$VERSION-linux-amd64"
 mkdir -p "$PKG_LINUX"
 cp "$RELEASE/baize-server" "$PKG_LINUX/"
 cp "$ROOT/deploy/install_server.sh" "$PKG_LINUX/"
 cp "$ROOT/deploy/README.md" "$PKG_LINUX/"
+# 附带 baize-agent.exe：install_server.sh [3/7] 自动拷到 agent-files → Server zip 下载即用（零手动）
+# 注意：Windows git-bash 下 `[[ -f "D:/..." ]]` 不认盘符路径，用相对路径判断（基于 $ROOT）
+cd "$ROOT"
+AGENT_EXE="../agent/target/debug/baize-agent.exe"
+if [[ -f "$AGENT_EXE" ]]; then
+  cp "$AGENT_EXE" "$PKG_LINUX/"
+  echo "      已附带 baize-agent.exe → 解压后 install_server.sh 自动部署为 zip 下载源"
+else
+  echo "      [警告] 未找到 baize-agent.exe（$AGENT_EXE），发布包不含 Agent（下载页 zip 功能不可用）"
+fi
 chmod +x "$PKG_LINUX/install_server.sh"
 # --mode=755 必须加：Windows 交叉编译产物在 NTFS 上无 POSIX 执行位，
 # MSYS 的 chmod +x 对无扩展名文件（baize-server）无效，tar --mode 直接设归档权限
@@ -48,6 +58,9 @@ PKG_WIN="$RELEASE/pkg-win/baize-server-$VERSION-windows-amd64"
 mkdir -p "$PKG_WIN"
 cp "$RELEASE/baize-server.exe" "$PKG_WIN/"
 cp "$ROOT/deploy/README.md" "$PKG_WIN/"
+if [[ -f "$AGENT_EXE" ]]; then
+  cp "$AGENT_EXE" "$PKG_WIN/"
+fi
 # python3/python 任一可用（zip 打包用标准库，避免依赖 zip 命令）。
 # 注意：Windows 上 command -v python3 可能命中 WindowsApps 的 stub（执行即失败），
 #       必须用 "python -c import zipfile" 验证真实可用，而不是只看命令存在。

@@ -50,7 +50,7 @@ func ensureTLS(dataDir, publicAddr string) (string, string, string, error) {
 	now := time.Now()
 	caTmpl := &x509.Certificate{
 		SerialNumber:          big.NewInt(now.UnixNano()),
-		Subject:               pkix.Name{CommonName: "Baize EDR CA"},
+		Subject:               pkix.Name{CommonName: "Baize CA"},
 		NotBefore:             now.Add(-time.Hour),
 		NotAfter:              now.AddDate(caNotAfterYears, 0, 0),
 		IsCA:                  true,
@@ -102,7 +102,7 @@ func ensureTLS(dataDir, publicAddr string) (string, string, string, error) {
 	}
 	serverTmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(now.UnixNano() + 1),
-		Subject:      pkix.Name{CommonName: "Baize EDR Server"},
+		Subject:      pkix.Name{CommonName: "Baize Server"},
 		NotBefore:    now.Add(-time.Hour),
 		NotAfter:     now.Add(serverNotAfter),
 		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,

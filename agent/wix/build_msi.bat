@@ -4,7 +4,7 @@ setlocal
 cd /d "%~dp0"
 
 REM ═══════════════════════════════════════════════════════════
-REM  Baize EDR Agent MSI 构建脚本（WiX 3.14）
+REM  Baize Agent MSI 构建脚本（WiX 3.14）
 REM  用法: build_msi.bat [baize-agent.exe 路径]
 REM  默认使用 ..\..\target\debug\baize-agent.exe
 REM  WiX 工具链: 环境变量 WIX_BIN 指向 candle.exe 所在目录

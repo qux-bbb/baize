@@ -1,4 +1,4 @@
-# Baize (白泽) EDR 部署指南
+# Baize (白泽) 部署指南
 
 > 最少操作版：分步 + 预估耗时 + 每步验证。示例参数（如 `192.168.1.10`）**替换为你自己的**。
 
@@ -164,7 +164,7 @@ powershell -Command "Get-Content C:\ProgramData\Baize\agent.log -Tail 15 | Selec
 
 免去手工建目录/建用户/写 systemd 配置的步骤，一条命令完成安装（自动生成单元文件、启动服务、打印首次密码）。
 
-**前提**：`baize-server` 与 `install_server.sh` 同目录；可选同目录放置 `baize-agent.exe`/`.msi`（Server 的下载分发端点使用，不放则下载功能不可用）。
+**前提**：`baize-server` 与 `install_server.sh` 同目录。**发布包（build_release.sh 产出）已内置 `baize-agent.exe`**（解压后脚本自动部署为下载分发源，zip 下载立即可用）；`baize-agent.msi` 不放（MSI 内置的 ca.crt 与当前 Server 不匹配，需按本 Server 重建，见第 3 步）。
 
 ```bash
 sudo ./install_server.sh --public-addr 192.168.1.10

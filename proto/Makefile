@@ -1,4 +1,4 @@
-# Baize (白泽) EDR — Protobuf 代码生成
+# Baize (白泽) — Protobuf 代码生成
 # 用法: make gen (生成 Go + Rust 代码)
 
 PROTO_DIR = .

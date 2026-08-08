@@ -1,4 +1,4 @@
-// Baize (白泽) EDR Agent — Rust 版本
+// Baize (白泽) Agent — Rust 版本
 mod collector;
 
 #[cfg(windows)]
@@ -36,7 +36,7 @@ use pb::baize_service_client::BaizeServiceClient;
 use pb::{AgentInfo, Event};
 
 #[derive(Parser)]
-#[command(name = "baize-agent", about = "Baize EDR Agent")]
+#[command(name = "baize-agent", about = "Baize Agent")]
 struct Cli {
     #[arg(long, help = "Server gRPC 地址，如 http://192.168.1.10:50051；优先于 agent.conf")]
     server: Option<String>,

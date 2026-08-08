@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Baize (白泽) EDR Agent 安装包定义（WiX 3.14，纯 core schema，无扩展依赖）
+  Baize (白泽) Agent 安装包定义（WiX 3.14，纯 core schema，无扩展依赖）
   构建: build_msi.bat [baize-agent.exe 路径]
   安装: msiexec /i baize-agent.msi /q SERVER_ADDR="http://10.0.0.1:50051"
   说明:
@@ -11,11 +11,11 @@
     - auditpol（4688 审计）由 Agent 自身处理，安装包不干预
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
-  <Product Id="*" Name="Baize EDR Agent" Language="2052" Version="0.1.0"
+  <Product Id="*" Name="Baize Agent" Language="2052" Version="0.1.0"
            Manufacturer="Baize" UpgradeCode="43cfe540-c0ae-4c2d-94bf-b53978c30345"
            Codepage="936">
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine"
-             Description="Baize (白泽) EDR 终端检测与响应 Agent" />
+             Description="Baize (白泽) Agent" />
 
     <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="已安装更高版本的 Baize Agent。" />
     <MediaTemplate EmbedCab="yes" />

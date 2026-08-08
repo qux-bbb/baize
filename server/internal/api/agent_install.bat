@@ -3,7 +3,7 @@ setlocal
 cd /d "%~dp0"
 
 echo ============================================
-echo  Baize EDR Agent 安装程序
+echo  Baize Agent 安装程序
 echo ============================================
 echo.
 

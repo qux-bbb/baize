@@ -41,7 +41,7 @@ export default function LoginPage({ onLogin }: Props) {
       <div className="auth-card">
         <div className="auth-logo">◆</div>
         <h2 className="auth-title">Baize 白泽</h2>
-        <p className="auth-subtitle">EDR Dashboard</p>
+        <p className="auth-subtitle">Dashboard</p>
         <form onSubmit={handleSubmit} className="auth-form">
           <input
             value={username}

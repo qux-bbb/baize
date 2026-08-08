@@ -4,7 +4,7 @@ package baize.v1;
 option go_package = "github.com/qux-bbb/baize/proto/gen/go/baize/v1;baizev1";
 
 // ============================================================================
-// Baize (白泽) EDR — 协议定义
+// Baize (白泽) — 协议定义
 // Rust Agent ↔ Go Server 之间的通信契约
 // 通信方式: gRPC 双向流 (Bidirectional Streaming)
 // ============================================================================

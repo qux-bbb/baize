@@ -265,7 +265,7 @@ export default function App() {
             {route.page === 'host-detail' ? (
               <><span className="back" onClick={() => navigate('hosts')}>←</span> <span className="logo">◆</span> {host?.hostname || '主机详情'}</>
             ) : (
-              <><span className="logo">◆</span> Baize 白泽 <span className="subtitle">EDR Dashboard</span></>
+              <><span className="logo">◆</span> Baize 白泽 <span className="subtitle">Dashboard</span></>
             )}
           </h1>
           {route.page !== 'host-detail' && (

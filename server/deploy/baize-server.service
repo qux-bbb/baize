@@ -1,5 +1,5 @@
 [Unit]
-Description=Baize (白泽) EDR Server
+Description=Baize (白泽) Server
 After=network-online.target
 Wants=network-online.target
 

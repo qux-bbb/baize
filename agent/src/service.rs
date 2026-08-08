@@ -91,7 +91,7 @@ pub fn install() -> Result<()> {
 
     let service_info = ServiceInfo {
         name: OsString::from("baize-agent"),
-        display_name: OsString::from("Baize EDR Agent"),
+        display_name: OsString::from("Baize Agent"),
         service_type: ServiceType::OWN_PROCESS,
         start_type: ServiceStartType::AutoStart,
         error_control: ServiceErrorControl::Normal,
