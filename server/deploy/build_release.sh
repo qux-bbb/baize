@@ -83,6 +83,39 @@ fi
        "baize-server-$VERSION-windows-amd64") \
   || { echo "[错误] python zipfile 打包失败"; exit 1; }
 
+# [3.5/4] Agent 通用包（windows-amd64）——不含 Server 实例配置（ca/地址），
+#          GitHub Release 用；实例化包（带地址+ca）从 Server Dashboard 下载
+echo "[3.5/4] 打包 Agent 通用包..."
+PKG_AGENT="$RELEASE/pkg-agent/baize-agent-$VERSION-windows-amd64"
+mkdir -p "$PKG_AGENT"
+if [[ -f "$AGENT_EXE" ]]; then
+  cp "$AGENT_EXE" "$PKG_AGENT/"
+  cp "$ROOT/../agent/install.bat" "$PKG_AGENT/"
+  printf '{"server": "", "ca": "", "watch_dirs": []}\n' > "$PKG_AGENT/agent.conf"
+  cat > "$PKG_AGENT/README.txt" <<'EOF'
+Baize Agent (Windows amd64) - v0.1.0
+
+Install:
+  1. Edit agent.conf: set "server" to your Baize Server gRPC address
+     (e.g. "https://192.168.1.10:50051"), and copy the Server's ca.crt
+     next to baize-agent.exe if TLS is enabled.
+  2. Double-click install.bat (auto-elevates, click "Yes" on UAC).
+  3. Service "baize-agent" starts and connects automatically.
+
+Tip: If the Server is already deployed, download the ready-to-use zip
+from the Server Dashboard (address and CA are pre-configured).
+
+Uninstall: baize-agent.exe --uninstall
+EOF
+  (cd "$RELEASE/pkg-agent" \
+    && "$PYTHON_CMD" -m zipfile -c "../baize-agent-$VERSION-windows-amd64.zip" \
+         "baize-agent-$VERSION-windows-amd64") \
+    || { echo "[错误] Agent zip 打包失败"; exit 1; }
+  echo "      已生成 baize-agent-$VERSION-windows-amd64.zip"
+else
+  echo "      [警告] 未找到 baize-agent.exe，跳过 Agent 通用包"
+fi
+
 # [4/4] 校验 + SHA256
 echo "[4/4] 校验与校验和..."
 tar tzf "$RELEASE/baize-server-$VERSION-linux-amd64.tar.gz" \
@@ -91,8 +124,13 @@ tar tzf "$RELEASE/baize-server-$VERSION-linux-amd64.tar.gz" \
 (cd "$RELEASE" && "$PYTHON_CMD" -m zipfile -l "baize-server-$VERSION-windows-amd64.zip") \
   | grep -q "baize-server.exe" \
   || { echo "[错误] zip 缺 baize-server.exe"; exit 1; }
-(cd "$RELEASE" && sha256sum baize-server-$VERSION-* > SHA256SUMS.txt)
-rm -rf "$RELEASE/pkg-linux" "$RELEASE/pkg-win"
+if [[ -f "$AGENT_EXE" ]]; then
+  (cd "$RELEASE" && "$PYTHON_CMD" -m zipfile -l "baize-agent-$VERSION-windows-amd64.zip") \
+    | grep -q "baize-agent.exe" \
+    || { echo "[错误] Agent zip 缺 baize-agent.exe"; exit 1; }
+fi
+(cd "$RELEASE" && sha256sum baize-server-$VERSION-* baize-agent-$VERSION-* > SHA256SUMS.txt)
+rm -rf "$RELEASE/pkg-linux" "$RELEASE/pkg-win" "$RELEASE/pkg-agent"
 
 echo ""
 echo "=== 产物 (server/release/) ==="
