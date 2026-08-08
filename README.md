@@ -34,14 +34,16 @@
                              └───────────────────────┘
 ```
 
+> ⚠️ 图中 `auditd (Linux)` 为规划中（当前仅 Windows 进程采集）；文件/网络/DNS 采集已实现但需在设置页开启事件类型
+
 ## 技术栈
 
 | 层     | 语言     | 关键依赖                              |
 |--------|---------|---------------------------------------|
-| Agent  | Rust    | tonic (gRPC), windows-rs (ETW), yara  |
-| Server | Go      | gRPC, Elasticsearch Go client, embed   |
-| 存储   | Elasticsearch | 全文检索 + 聚合                     |
-| 前端   | React   | Material UI, 时间线/图可视化           |
+| Agent  | Rust    | tonic (gRPC), windows-rs (ETW)         |
+| Server | Go      | gRPC, Bleve 内嵌索引, embed            |
+| 存储   | Bleve   | 内嵌全文索引 + 聚合                    |
+| 前端   | React   | Vite + Dashboard                       |
 
 ## 目录结构
 
@@ -57,52 +59,54 @@ Baize/
 ├── agent/              # Rust Agent
 │   └── src/
 ├── scripts/            # 辅助脚本 (部署/测试)
-└── docs/               # 文档
 ```
 
 ## 快速开始
 
-### 1. 启动 Server
+> **📦 正式部署（Linux/Windows Server 一键安装、Agent 下载分发、验证闭环）：见 [`server/deploy/README.md`](server/deploy/README.md)**
+> 以下为开发模式（源码编译运行）。
+
+### 1. 启动 Server（开发模式，Windows）
 ```bash
 cd server
-run.bat              # 自动编译前端 + 启动 Server（推荐）
-# 或分开执行:
-# cd web && npm run build && cd .. && go run ./cmd/
+run.bat              # 自动编译前端 + 启动 Server
 ```
 
-Server 启动后:
+Server 启动后（**首次启动自动生成 TLS 证书 + 随机登录密码**，看控制台输出）：
 - gRPC 端口: `50051`
-- Dashboard + API: `http://localhost:8080`
+- Dashboard + API: `https://localhost:8080`（自签证书，浏览器提示时选择"继续访问"）
+- Agent 连接需要证书：把 `server/data/ca.crt` 拷到 Agent 的 exe 同目录，agent.conf 的 `server` 用 `https://` 且 `ca` 指向它
 
 ### 2. 启动 Agent（Windows，需管理员权限）
 ```cmd
 REM 先启用进程创建审计（只需执行一次）
 auditpol /set /subcategory:{0CCE922B-69AE-11D9-BED3-505054503030} /success:enable
 
-REM 启动 Agent
-cd D:\files\projects\Baize\agent\target\debug
-baize-agent.exe
+REM 在 agent 编译产物目录创建 agent.conf（与 baize-agent.exe 同目录）：
+REM {"server":"https://127.0.0.1:50051","ca":"ca.crt","watch_dirs":[]}
+REM 并把 Server 的 data/ca.crt 拷到同目录
+
+REM 启动 Agent（编译产物位置）
+agent\target\debug\baize-agent.exe
 ```
 
 ### 3. 编译 Agent（改代码后）
 
-在 **cmd.exe** 中执行（需要设置 PROTOC 环境变量）：
+需要 protoc（生成 gRPC 桩代码）：设置 `PROTOC` 环境变量指向你的 protoc.exe（若已加入系统 PATH 则省略）：
 
 ```cmd
-cd D:\files\projects\Baize\agent
-set PROTOC=C:\Users\q\protoc\bin\protoc.exe
-cargo build
+cd agent
+set PROTOC=<你的 protoc.exe 路径>
+cargo build          # 产物: agent\target\debug\baize-agent.exe
 ```
 
-或在 **PowerShell** 中：
+或在 PowerShell 中：
 
 ```powershell
-cd D:\files\projects\Baize\agent
-$env:PROTOC="C:\Users\q\protoc\bin\protoc.exe"
+cd agent
+$env:PROTOC="<你的 protoc.exe 路径>"
 cargo build
 ```
-
-> 注意：Agent 编译时需要 protoc 生成 gRPC 桩代码。`PROTOC` 环境变量指向 protoc.exe 路径。如果已设置到系统 PATH 则可省略。
 
 ### 4. 编译 Protobuf（改了 proto 文件后需要重新生成）
 ```bash
