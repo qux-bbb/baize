@@ -40,6 +40,14 @@ function formatTime(ts: string): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
 
+// 系统状态连接格式转换：{local_ip, local_port, remote_ip, remote_port} → {local:"ip:port", remote:"ip:port"}
+// （状态数据连接字段是分开的 IP/端口，实时查询是拼接好的字符串，统一成展示结构）
+function convConn(c: any) {
+  const local = `${c.local_ip || '0.0.0.0'}:${c.local_port}`
+  const remote = c.remote_ip && c.remote_ip !== '0.0.0.0' ? `${c.remote_ip}:${c.remote_port}` : ''
+  return { pid: c.pid, local, remote, state: c.state || '' }
+}
+
 const SEV: Record<string, string> = {
   critical: '#fb7185', high: '#fbbf24', medium: '#fb923c', low: '#22d3ee', info: '#94a3b8',
 }
@@ -80,10 +88,23 @@ export default function App() {
   const [err, setErr] = useState('')
   const [detail, setDetail] = useState<AlertDetail | null>(null)
   const [eventDetail, setEventDetail] = useState<any | null>(null)
-  const [procs, setProcs] = useState<any[]>([])
-  const [conns, setConns] = useState<any[]>([])
   const [procDetail, setProcDetail] = useState<any | null>(null)
+  // 系统状态展示（主机详情页）：默认 = 系统状态基线（首次上线/刷新时 Agent 上报落库的最新一份）；
+  // 点"实时刷新" = 实时查询当前状态（Agent 收到指令会同时上报新状态，Server 覆盖落库）
+  const [sysView, setSysView] = useState<{
+    source: 'state' | 'live'
+    capturedAt: string   // state 模式：Agent 采集时间
+    receivedAt: string   // state 模式：Server 收到时间
+    liveAt: string       // live 模式：查询时间
+    procs: any[]
+    tcp: any[]
+    udp: any[]
+  } | null>(null)
   const [sysLoading, setSysLoading] = useState(false)
+  const [sysRefreshing, setSysRefreshing] = useState(false)
+  const [sysErr, setSysErr] = useState('')
+  // 系统状态标签页：进程 / TCP 连接 / UDP 监听（默认进程）
+  const [sysTab, setSysTab] = useState<'procs' | 'tcp' | 'udp'>('procs')
   const [searchQ, setSearchQ] = useState('')
   const [hostInput, setHostInput] = useState('')
   const [showChangePwd, setShowChangePwd] = useState(false)
@@ -166,15 +187,46 @@ export default function App() {
     location.hash = ''
   }, [])
 
-  const loadSysInfo = useCallback(async () => {
+  // 进入主机详情页自动加载系统状态（基线：首次上线/刷新时 Agent 上报落库的最新一份）
+  const loadSystemState = useCallback(async () => {
     if (route.page !== 'host-detail') return
-    setSysLoading(true)
+    setSysLoading(true); setSysErr('')
+    try {
+      const d = await fetchJSON<any>(`${API}/system-state?agent_id=${(route as any).agentId}`)
+      setSysView({
+        source: 'state',
+        capturedAt: d.captured_at || '',
+        receivedAt: d.received_at || '',
+        liveAt: '',
+        procs: d.processes || [],
+        tcp: (d.tcp_connections || []).map(convConn),
+        udp: (d.udp_endpoints || []).map(convConn),
+      })
+    } catch (e: any) {
+      setSysView(null)
+      if (e.message !== '该主机暂无系统状态') setSysErr(e.message)
+    }
+    setSysLoading(false)
+  }, [route.page, (route as any).agentId])
+
+  useEffect(() => { loadSystemState() }, [loadSystemState])
+
+  // 实时刷新：查询当前状态并展示；Agent 收到指令会同时上报新系统状态（Server 覆盖落库 = 刷新即更新基线）
+  const refreshSysInfo = useCallback(async () => {
+    if (route.page !== 'host-detail') return
+    setSysRefreshing(true); setSysErr('')
     try {
       const d = await fetchJSON<any>(`${API}/systeminfo?agent_id=${(route as any).agentId}`)
-      setProcs(d.processes || [])
-      setConns((d.tcp_connections || []).concat(d.udp_endpoints || []))
-    } catch (e: any) { setErr(e.message) }
-    setSysLoading(false)
+      setSysView({
+        source: 'live',
+        capturedAt: '', receivedAt: '',
+        liveAt: new Date().toISOString(),
+        procs: d.processes || [],
+        tcp: (d.tcp_connections || []).map((c: any) => ({ pid: c.pid, local: c.local, remote: c.remote || '', state: c.state })),
+        udp: (d.udp_endpoints || []).map((c: any) => ({ pid: c.pid, local: c.local, remote: '', state: c.state })),
+      })
+    } catch (e: any) { setSysErr(e.message) }
+    setSysRefreshing(false)
   }, [route.page, (route as any).agentId])
 
   const doSearch = useCallback(async () => {
@@ -352,40 +404,66 @@ export default function App() {
               <button className="btn" onClick={() => navigate('events?host=' + host.hostname)}>查看事件</button>
             </div>
             <div style={{marginTop:'1rem'}}>
-              <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'0.5rem'}}>
-                <span style={{fontSize:'0.9rem', fontWeight:600}}>系统信息</span>
-                <button className="btn" onClick={loadSysInfo} disabled={sysLoading} style={{fontSize:'0.75rem'}}>{sysLoading ? '加载中...' : '刷新'}</button>
+              <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'0.5rem', flexWrap:'wrap', gap:'0.5rem'}}>
+                <span style={{fontSize:'0.9rem', fontWeight:600}}>
+                  系统信息
+                  {sysView && (
+                    sysView.source === 'state'
+                      ? <span style={{fontWeight:'normal', fontSize:'0.75rem', color:'#94a3b8', marginLeft:'0.5rem'}}>采集于 {formatTime(sysView.capturedAt)} · 收到于 {formatTime(sysView.receivedAt)}</span>
+                      : <span style={{fontWeight:'normal', fontSize:'0.75rem', color:'#22d3ee', marginLeft:'0.5rem'}}>查询于 {formatTime(sysView.liveAt)}</span>
+                  )}
+                </span>
+                <button className="btn" onClick={refreshSysInfo} disabled={sysRefreshing} style={{fontSize:'0.75rem'}}>{sysRefreshing ? '刷新中...' : '刷新'}</button>
               </div>
-              <div style={{display:'flex', gap:'1rem'}}>
-              <div style={{flex:1}}>
-                <h3 style={{margin:'0 0 0.5rem'}}>进程 ({procs.length})</h3>
-                <div className="scroll-table">
-                <table className="table">
-                  <thead><tr><th>PID</th><th>名称</th><th>CPU%</th><th>内存</th><th></th></tr></thead>
-                  <tbody>
-                    {procs.map((p,i) => (
-                      <tr key={i}><td className="mono">{p.pid}</td><td>{p.name}</td><td>{p.cpu?.toFixed(1)}</td><td>{(p.memory / 1024).toFixed(0)}KB</td><td className="action"><span className="link" onClick={() => setProcDetail(p)}>详情</span></td></tr>
-                    ))}
-                    {procs.length === 0 && <tr><td colSpan={5} className="empty">点击刷新获取进程信息</td></tr>}
-                  </tbody>
-                </table>
+              {sysErr && <div className="error" style={{marginBottom:'0.5rem'}}>{sysErr}</div>}
+              {sysLoading ? <div className="loading">加载系统状态...</div> : (
+              sysView ? (
+                <div>
+                  <div className="tabs" style={{marginBottom:'0.6rem'}}>
+                    <button className={sysTab === 'procs' ? 'active' : ''} onClick={() => setSysTab('procs')}>进程 ({sysView.procs.length})</button>
+                    <button className={sysTab === 'tcp' ? 'active' : ''} onClick={() => setSysTab('tcp')}>TCP 连接 ({sysView.tcp.length})</button>
+                    <button className={sysTab === 'udp' ? 'active' : ''} onClick={() => setSysTab('udp')}>UDP 监听 ({sysView.udp.length})</button>
+                  </div>
+                  <div className="scroll-table">
+                  {sysTab === 'procs' && (
+                    <table className="table">
+                      <thead><tr><th>PID</th><th>名称</th><th>路径</th><th>CPU%</th><th>内存</th><th></th></tr></thead>
+                      <tbody>
+                        {sysView.procs.map((p,i) => (
+                          <tr key={i}><td className="mono">{p.pid}</td><td>{p.name}</td><td className="mono td-ellipsis" title={p.exe || ''}>{p.exe || '-'}</td><td>{p.cpu != null ? p.cpu.toFixed(1) : '-'}</td><td>{p.memory != null ? (p.memory / 1024).toFixed(0) + 'KB' : '-'}</td><td className="action"><span className="link" onClick={() => setProcDetail(p)}>详情</span></td></tr>
+                        ))}
+                        {sysView.procs.length === 0 && <tr><td colSpan={6} className="empty">无进程数据</td></tr>}
+                      </tbody>
+                    </table>
+                  )}
+                  {sysTab === 'tcp' && (
+                    <table className="table">
+                      <thead><tr><th>PID</th><th>本地</th><th>远程</th><th>状态</th></tr></thead>
+                      <tbody>
+                        {sysView.tcp.map((c,i) => (
+                          <tr key={i}><td className="mono">{c.pid}</td><td className="mono">{c.local}</td><td className="mono">{c.remote || '-'}</td><td>{c.state}</td></tr>
+                        ))}
+                        {sysView.tcp.length === 0 && <tr><td colSpan={4} className="empty">无 TCP 连接</td></tr>}
+                      </tbody>
+                    </table>
+                  )}
+                  {sysTab === 'udp' && (
+                    <table className="table">
+                      <thead><tr><th>PID</th><th>本地</th><th>状态</th></tr></thead>
+                      <tbody>
+                        {sysView.udp.map((c,i) => (
+                          <tr key={i}><td className="mono">{c.pid}</td><td className="mono">{c.local}</td><td>{c.state}</td></tr>
+                        ))}
+                        {sysView.udp.length === 0 && <tr><td colSpan={3} className="empty">无 UDP 监听</td></tr>}
+                      </tbody>
+                    </table>
+                  )}
+                  </div>
                 </div>
-              </div>
-              <div style={{flex:1}}>
-                <h3 style={{margin:'0 0 0.5rem'}}>网络连接 ({conns.length})</h3>
-                <div className="scroll-table">
-                <table className="table">
-                  <thead><tr><th>PID</th><th>本地</th><th>远程</th><th>状态</th></tr></thead>
-                  <tbody>
-                    {conns.map((c,i) => (
-                      <tr key={i}><td className="mono">{c.pid}</td><td className="mono">{c.local}</td><td className="mono">{c.remote || '-'}</td><td>{c.state}</td></tr>
-                    ))}
-                    {conns.length === 0 && <tr><td colSpan={4} className="empty">点击刷新获取连接信息</td></tr>}
-                  </tbody>
-                </table>
-                </div>
-              </div>
-            </div>
+              ) : (
+                <div className="empty">该主机暂无系统状态（Agent 未上线或版本过旧），可点击"刷新"获取当前状态</div>
+              )
+              )}
             </div>
           </div>
         )}
@@ -556,7 +634,8 @@ export default function App() {
               <table className="kv-table">
                 <tbody>
                   {[['PID', procDetail.pid], ['名称', procDetail.name], ['路径', procDetail.exe],
-                    ['CPU', procDetail.cpu?.toFixed(1) + '%'], ['内存', (procDetail.memory / 1024).toFixed(0) + ' KB']].map(([k,v]) => (
+                    ['CPU', procDetail.cpu != null ? procDetail.cpu.toFixed(1) + '%' : '-'],
+                    ['内存', procDetail.memory != null ? (procDetail.memory / 1024).toFixed(0) + ' KB' : '-']].map(([k,v]) => (
                     <tr key={k as string}><td className="mono">{k as string}</td><td className="mono">{String(v)}</td></tr>
                   ))}
                 </tbody>

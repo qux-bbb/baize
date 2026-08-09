@@ -255,8 +255,9 @@ pub async fn run_agent_loop(
     });
 
     // Agent ID：优先用命令行指定的，否则从文件读取/自动生成并持久化
-    let agent_id = if let Some(id) = cli_agent_id {
-        id
+    // 第二返回值：是否首次上线（新建 agent_id 或 CLI 指定）→ 决定是否上报系统快照
+    let (agent_id, need_snapshot) = if let Some(id) = cli_agent_id {
+        (id, true)
     } else {
         load_or_create_agent_id()
     };
@@ -292,12 +293,14 @@ pub async fn run_agent_loop(
 
     // 断线重连循环
     let watch_str = watch.join(",");
+    // 快照只在首次成功连接时发送一次（发完即置 false，重连不再发）
+    let mut need_snapshot = need_snapshot;
     loop {
         if stop_requested() {
             info!("收到停止请求，Agent 退出");
             break;
         }
-        match run(&server, agent_info.clone(), &sys, interval_secs, &watch_str, cfg.ca.clone()).await {
+        match run(&server, agent_info.clone(), &sys, interval_secs, &watch_str, cfg.ca.clone(), &mut need_snapshot).await {
             Ok(()) => {
                 info!("连接正常结束，5 秒后重连...");
                 if sleep_interruptible(Duration::from_secs(5)).await {
@@ -373,6 +376,7 @@ async fn run(
     interval_secs: u64,
     watch: &str,
     ca: Option<String>,
+    need_snapshot: &mut bool,
 ) -> Result<()> {
     // TLS：server 为 https:// 时启用（ca 指向 CA 证书，相对路径按 exe 同目录解析）
     let mut endpoint = Endpoint::from_shared(server.to_string()).context("无效的 Server 地址")?;
@@ -432,6 +436,24 @@ async fn run(
         sequence_id: 0,
         event_type: Some(pb::event::EventType::ProcessCreate(pb::ProcessCreateEvent::default())),
     }).await;
+
+    // 首次上线：采集并上报系统状态（进程 + TCP/UDP 连接）
+    // 发送后置 false —— 断线重连不再重发；Server 侧按 agent_id 幂等覆盖存储
+    if *need_snapshot {
+        let st = collect_system_state();
+        info!(
+            "[状态] 首次上线上报: {} 进程, {} TCP, {} UDP",
+            st.processes.len(),
+            st.tcp_connections.len(),
+            st.udp_endpoints.len()
+        );
+        let _ = tx.send(pb::Event {
+            agent_info: None,
+            sequence_id: 0,
+            event_type: Some(pb::event::EventType::SystemState(st)),
+        }).await;
+        *need_snapshot = false;
+    }
 
     let response = client
         .agent_stream(Request::new(streaming_request))
@@ -501,6 +523,20 @@ async fn run(
                     Ok(String::new())
                 }
                 CommandType::QuerySystemInfo(_) => {
+                    // 手动刷新：先上报系统状态（Server 覆盖落库，刷新 = 更新资产状态），
+                    // 再返回实时 JSON（Dashboard 展示用）
+                    let st = collect_system_state();
+                    info!(
+                        "[状态] 手动刷新上报: {} 进程, {} TCP, {} UDP",
+                        st.processes.len(),
+                        st.tcp_connections.len(),
+                        st.udp_endpoints.len()
+                    );
+                    let _ = tx.send(pb::Event {
+                        agent_info: None,
+                        sequence_id: 0,
+                        event_type: Some(pb::event::EventType::SystemState(st)),
+                    }).await;
                     query_system_info()
                 }
                 CommandType::ConfigureEventTypes(et_cmd) => {
@@ -673,7 +709,10 @@ fn agent_id_path() -> std::path::PathBuf {
     }
 }
 
-fn load_or_create_agent_id() -> String {
+/// 读取或创建 Agent ID。返回 (id, 是否新建)。
+/// 新建 = agent_id 文件首次创建 = 真·首次上线 → 需要上报系统快照。
+/// CLI 显式指定 agent_id 时也视为"需要快照"（开发/调试场景，Server 幂等覆盖无害）。
+fn load_or_create_agent_id() -> (String, bool) {
     let path = agent_id_path();
 
     // 尝试读取已有的 agent_id
@@ -681,7 +720,7 @@ fn load_or_create_agent_id() -> String {
         let id = id.trim().to_string();
         if !id.is_empty() {
             tracing::info!("读取已保存的 Agent ID: {}", id);
-            return id;
+            return (id, false);
         }
     }
 
@@ -694,7 +733,7 @@ fn load_or_create_agent_id() -> String {
         Ok(_) => tracing::info!("Agent ID 已保存到: {:?}", path),
         Err(e) => tracing::warn!("无法保存 Agent ID 文件: {:?}", e),
     }
-    new_id
+    (new_id, true)
 }
 
 // ── 指令执行器 ──────────────────────────────────────────
@@ -786,6 +825,115 @@ fn execute_script(content: &str, interpreter: &str) -> anyhow::Result<()> {
 }
 
 // ── 系统信息查询 ──────────────────────────────────────
+
+/// 采集系统状态（首次上线 / 手动刷新时的当前进程 + 网络连接）。
+/// 进程：sysinfo（跨平台）；TCP/UDP 连接表：GetExtendedTcpTable/GetExtendedUdpTable（仅 Windows）。
+/// 与 query_system_info 的区别：返回结构化 proto message（落库），而非 JSON 字符串（Dashboard 展示）。
+fn collect_system_state() -> pb::SystemStateEvent {
+    let mut st = pb::SystemStateEvent {
+        captured_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64,
+        processes: Vec::new(),
+        tcp_connections: Vec::new(),
+        udp_endpoints: Vec::new(),
+    };
+
+    // 进程信息 (sysinfo)
+    let mut sys = sysinfo::System::new();
+    sys.refresh_all();
+    for (pid, proc) in sys.processes() {
+        // cpu 可能为 NaN（进程 CPU 时间未采样/权限不足），JSON 不支持 NaN，清洗为 0
+        let cpu = proc.cpu_usage();
+        let cpu = if cpu.is_finite() { cpu } else { 0.0 };
+        st.processes.push(pb::ProcessInfo {
+            pid: pid.as_u32() as u64,
+            name: proc.name().to_string_lossy().into(),
+            exe: proc.exe().map(|p| p.to_string_lossy().into()).unwrap_or_default(),
+            cpu,
+            memory: proc.memory(),
+        });
+    }
+
+    #[cfg(windows)]
+    collect_network_state(&mut st);
+
+    st
+}
+
+#[cfg(windows)]
+fn collect_network_state(st: &mut pb::SystemStateEvent) {
+    use windows::Win32::NetworkManagement::IpHelper::*;
+
+    const AF_INET: u32 = 2;
+
+    unsafe {
+        // TCP 连接表
+        let mut buf_size: u32 = 0;
+        let _ = GetExtendedTcpTable(
+            None, &mut buf_size as *mut u32, false, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0,
+        );
+        if buf_size > 0 {
+            let mut buf = vec![0u8; buf_size as usize];
+            if GetExtendedTcpTable(
+                Some(buf.as_mut_ptr() as *mut core::ffi::c_void),
+                &mut buf_size as *mut u32, false, AF_INET, TCP_TABLE_OWNER_PID_ALL, 0,
+            ) == 0 {
+                let table = &*(buf.as_ptr() as *const MIB_TCPTABLE_OWNER_PID);
+                let entries = std::slice::from_raw_parts(
+                    table.table.as_ptr(),
+                    table.dwNumEntries as usize,
+                );
+                for row in entries {
+                    let state = match row.dwState {
+                        1 => "CLOSED", 2 => "LISTEN", 3 => "SYN_SENT",
+                        4 => "SYN_RCVD", 5 => "ESTABLISHED", 6 => "FIN_WAIT1",
+                        7 => "FIN_WAIT2", 8 => "CLOSE_WAIT", 9 => "CLOSING",
+                        10 => "LAST_ACK", 11 => "TIME_WAIT", _ => "UNKNOWN",
+                    };
+                    st.tcp_connections.push(pb::ConnectionInfo {
+                        pid: row.dwOwningPid as u64,
+                        local_ip: std::net::Ipv4Addr::from(row.dwLocalAddr.to_ne_bytes()).to_string(),
+                        local_port: u16::from_be(row.dwLocalPort as u16) as u32,
+                        remote_ip: std::net::Ipv4Addr::from(row.dwRemoteAddr.to_ne_bytes()).to_string(),
+                        remote_port: u16::from_be(row.dwRemotePort as u16) as u32,
+                        state: state.to_string(),
+                    });
+                }
+            }
+        }
+
+        // UDP 监听表
+        let mut buf_size: u32 = 0;
+        let _ = GetExtendedUdpTable(
+            None, &mut buf_size as *mut u32, false, AF_INET, UDP_TABLE_OWNER_PID, 0,
+        );
+        if buf_size > 0 {
+            let mut buf = vec![0u8; buf_size as usize];
+            if GetExtendedUdpTable(
+                Some(buf.as_mut_ptr() as *mut core::ffi::c_void),
+                &mut buf_size as *mut u32, false, AF_INET, UDP_TABLE_OWNER_PID, 0,
+            ) == 0 {
+                let table = &*(buf.as_ptr() as *const MIB_UDPTABLE_OWNER_PID);
+                let entries = std::slice::from_raw_parts(
+                    table.table.as_ptr(),
+                    table.dwNumEntries as usize,
+                );
+                for row in entries {
+                    st.udp_endpoints.push(pb::ConnectionInfo {
+                        pid: row.dwOwningPid as u64,
+                        local_ip: std::net::Ipv4Addr::from(row.dwLocalAddr.to_ne_bytes()).to_string(),
+                        local_port: u16::from_be(row.dwLocalPort as u16) as u32,
+                        remote_ip: String::new(),
+                        remote_port: 0,
+                        state: "LISTEN".to_string(),
+                    });
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn collect_network_state(_st: &mut pb::SystemStateEvent) {}
 #[cfg(windows)]
 fn query_system_info() -> anyhow::Result<String> {
     use serde::Serialize;

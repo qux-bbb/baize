@@ -331,6 +331,42 @@ func csvVal(fields map[string]interface{}, key string) string {
 
 // ── 系统信息查询 ──────────────────────────────────────────
 
+// SystemState 返回某 Agent 的系统状态（首次上线/刷新时采集，Server 覆盖存储的最新一份）
+// GET /api/system-state?agent_id=xxx
+func (h *Handler) SystemState(w http.ResponseWriter, r *http.Request) {
+	agentID := r.URL.Query().Get("agent_id")
+	if agentID == "" {
+		http.Error(w, "missing agent_id", 400)
+		return
+	}
+	doc, err := h.store.GetSystemState(agentID)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	if doc == nil {
+		http.Error(w, "该主机暂无系统状态", 404)
+		return
+	}
+
+	var processes []pb.ProcessInfo
+	var tcpConns []pb.ConnectionInfo
+	var udpEndpoints []pb.ConnectionInfo
+	_ = json.Unmarshal([]byte(doc.Processes), &processes)
+	_ = json.Unmarshal([]byte(doc.TCPConnections), &tcpConns)
+	_ = json.Unmarshal([]byte(doc.UDPEndpoints), &udpEndpoints)
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"agent_id":        doc.AgentID,
+		"hostname":        doc.Hostname,
+		"captured_at":     doc.CapturedAt,
+		"received_at":     doc.ReceivedAt,
+		"processes":       processes,
+		"tcp_connections": tcpConns,
+		"udp_endpoints":   udpEndpoints,
+	})
+}
+
 func (h *Handler) SystemInfo(w http.ResponseWriter, r *http.Request) {
 	agentID := r.URL.Query().Get("agent_id")
 	if agentID == "" {

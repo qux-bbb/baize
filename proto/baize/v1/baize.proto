@@ -142,6 +142,40 @@ message DnsQueryEvent {
 }
 
 // ---------------------------------------------------------------------------
+// 3. 系统状态 (System State)
+//    Agent 首次上线 + 手动刷新时上报的当前系统状态（进程 + 网络连接）。
+//    与事件不同：状态是"某个时间点的快照"，不送检测引擎，Server 按 agent_id
+//    幂等覆盖存储（type:system_state，只保留最新一份），用于资产可见性。
+// ---------------------------------------------------------------------------
+
+// 进程状态条目
+message ProcessInfo {
+  uint64 pid = 1;                 // 进程 PID
+  string name = 2;                // 进程名
+  string exe = 3;                 // 可执行文件绝对路径
+  float cpu = 4;                  // CPU 使用率 (%)
+  uint64 memory = 5;              // 内存占用 (字节)
+}
+
+// 网络连接状态条目（TCP / UDP 共用）
+message ConnectionInfo {
+  uint64 pid = 1;                 // 属主进程 PID
+  string local_ip = 2;            // 本端 IP
+  uint32 local_port = 3;          // 本端端口
+  string remote_ip = 4;           // 远端 IP (UDP 为空)
+  uint32 remote_port = 5;         // 远端端口 (UDP 为 0)
+  string state = 6;               // TCP: ESTABLISHED/LISTEN/... ; UDP: "LISTEN"
+}
+
+// 系统状态 — Agent 首次上线 / 手动刷新时上报，Server 覆盖存储最新一份
+message SystemStateEvent {
+  uint64 captured_at_ns = 1;      // Agent 侧采集时间 (纳秒)
+  repeated ProcessInfo processes = 2;
+  repeated ConnectionInfo tcp_connections = 3;
+  repeated ConnectionInfo udp_endpoints = 4;
+}
+
+// ---------------------------------------------------------------------------
 // 3. 事件包装器 (Agent → Server 的上报单元)
 // ---------------------------------------------------------------------------
 
@@ -160,6 +194,7 @@ message Event {
     ScheduledTaskEvent scheduled_task = 17;
     YaraMatchEvent yara_match = 18;
     DnsQueryEvent dns_query = 19;
+    SystemStateEvent system_state = 20;
   }
 }
 

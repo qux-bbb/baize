@@ -117,6 +117,20 @@ func processEvent(event *pb.Event, es *store.Store, eng *engine.Engine) {
 	hostname := event.GetAgentInfo().GetHostname()
 	seq := event.GetSequenceId()
 
+	// 0. 系统状态：独立存储（type:system_state，幂等覆盖只留最新），不进事件索引、不进检测引擎
+	if st, ok := event.GetEventType().(*pb.Event_SystemState); ok {
+		if es != nil {
+			if err := es.WriteSystemState(st.SystemState, event.GetAgentInfo()); err != nil {
+				log.Printf("[State] 写入失败: %v", err)
+			} else {
+				s := st.SystemState
+				log.Printf("[State] Agent=%s (%s) 已存储: %d 进程, %d TCP, %d UDP",
+					agentID, hostname, len(s.GetProcesses()), len(s.GetTcpConnections()), len(s.GetUdpEndpoints()))
+			}
+		}
+		return
+	}
+
 	// 1. 写入 ES
 	if es != nil {
 		if err := es.WriteEvent(event); err != nil {
@@ -327,6 +341,7 @@ func main() {
 			mux.HandleFunc("GET /api/export/events", apiHandler.ExportEvents)
 			mux.HandleFunc("GET /api/export/alerts", apiHandler.ExportAlerts)
 			mux.HandleFunc("GET /api/systeminfo", apiHandler.SystemInfo)
+			mux.HandleFunc("GET /api/system-state", apiHandler.SystemState)
 		}
 		mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]string{"status": "ok"})

@@ -1060,6 +1060,237 @@ func (x *DnsQueryEvent) GetTimestampNs() uint64 {
 	return 0
 }
 
+// 进程状态条目
+type ProcessInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Pid           uint64                 `protobuf:"varint,1,opt,name=pid,proto3" json:"pid,omitempty"`       // 进程 PID
+	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`      // 进程名
+	Exe           string                 `protobuf:"bytes,3,opt,name=exe,proto3" json:"exe,omitempty"`        // 可执行文件绝对路径
+	Cpu           float32                `protobuf:"fixed32,4,opt,name=cpu,proto3" json:"cpu,omitempty"`      // CPU 使用率 (%)
+	Memory        uint64                 `protobuf:"varint,5,opt,name=memory,proto3" json:"memory,omitempty"` // 内存占用 (字节)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProcessInfo) Reset() {
+	*x = ProcessInfo{}
+	mi := &file_baize_v1_baize_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProcessInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProcessInfo) ProtoMessage() {}
+
+func (x *ProcessInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_baize_v1_baize_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProcessInfo.ProtoReflect.Descriptor instead.
+func (*ProcessInfo) Descriptor() ([]byte, []int) {
+	return file_baize_v1_baize_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *ProcessInfo) GetPid() uint64 {
+	if x != nil {
+		return x.Pid
+	}
+	return 0
+}
+
+func (x *ProcessInfo) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ProcessInfo) GetExe() string {
+	if x != nil {
+		return x.Exe
+	}
+	return ""
+}
+
+func (x *ProcessInfo) GetCpu() float32 {
+	if x != nil {
+		return x.Cpu
+	}
+	return 0
+}
+
+func (x *ProcessInfo) GetMemory() uint64 {
+	if x != nil {
+		return x.Memory
+	}
+	return 0
+}
+
+// 网络连接状态条目（TCP / UDP 共用）
+type ConnectionInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Pid           uint64                 `protobuf:"varint,1,opt,name=pid,proto3" json:"pid,omitempty"`                                 // 属主进程 PID
+	LocalIp       string                 `protobuf:"bytes,2,opt,name=local_ip,json=localIp,proto3" json:"local_ip,omitempty"`           // 本端 IP
+	LocalPort     uint32                 `protobuf:"varint,3,opt,name=local_port,json=localPort,proto3" json:"local_port,omitempty"`    // 本端端口
+	RemoteIp      string                 `protobuf:"bytes,4,opt,name=remote_ip,json=remoteIp,proto3" json:"remote_ip,omitempty"`        // 远端 IP (UDP 为空)
+	RemotePort    uint32                 `protobuf:"varint,5,opt,name=remote_port,json=remotePort,proto3" json:"remote_port,omitempty"` // 远端端口 (UDP 为 0)
+	State         string                 `protobuf:"bytes,6,opt,name=state,proto3" json:"state,omitempty"`                              // TCP: ESTABLISHED/LISTEN/... ; UDP: "LISTEN"
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConnectionInfo) Reset() {
+	*x = ConnectionInfo{}
+	mi := &file_baize_v1_baize_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConnectionInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConnectionInfo) ProtoMessage() {}
+
+func (x *ConnectionInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_baize_v1_baize_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConnectionInfo.ProtoReflect.Descriptor instead.
+func (*ConnectionInfo) Descriptor() ([]byte, []int) {
+	return file_baize_v1_baize_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *ConnectionInfo) GetPid() uint64 {
+	if x != nil {
+		return x.Pid
+	}
+	return 0
+}
+
+func (x *ConnectionInfo) GetLocalIp() string {
+	if x != nil {
+		return x.LocalIp
+	}
+	return ""
+}
+
+func (x *ConnectionInfo) GetLocalPort() uint32 {
+	if x != nil {
+		return x.LocalPort
+	}
+	return 0
+}
+
+func (x *ConnectionInfo) GetRemoteIp() string {
+	if x != nil {
+		return x.RemoteIp
+	}
+	return ""
+}
+
+func (x *ConnectionInfo) GetRemotePort() uint32 {
+	if x != nil {
+		return x.RemotePort
+	}
+	return 0
+}
+
+func (x *ConnectionInfo) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
+// 系统状态 — Agent 首次上线 / 手动刷新时上报，Server 覆盖存储最新一份
+type SystemStateEvent struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	CapturedAtNs   uint64                 `protobuf:"varint,1,opt,name=captured_at_ns,json=capturedAtNs,proto3" json:"captured_at_ns,omitempty"` // Agent 侧采集时间 (纳秒)
+	Processes      []*ProcessInfo         `protobuf:"bytes,2,rep,name=processes,proto3" json:"processes,omitempty"`
+	TcpConnections []*ConnectionInfo      `protobuf:"bytes,3,rep,name=tcp_connections,json=tcpConnections,proto3" json:"tcp_connections,omitempty"`
+	UdpEndpoints   []*ConnectionInfo      `protobuf:"bytes,4,rep,name=udp_endpoints,json=udpEndpoints,proto3" json:"udp_endpoints,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *SystemStateEvent) Reset() {
+	*x = SystemStateEvent{}
+	mi := &file_baize_v1_baize_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SystemStateEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SystemStateEvent) ProtoMessage() {}
+
+func (x *SystemStateEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_baize_v1_baize_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SystemStateEvent.ProtoReflect.Descriptor instead.
+func (*SystemStateEvent) Descriptor() ([]byte, []int) {
+	return file_baize_v1_baize_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *SystemStateEvent) GetCapturedAtNs() uint64 {
+	if x != nil {
+		return x.CapturedAtNs
+	}
+	return 0
+}
+
+func (x *SystemStateEvent) GetProcesses() []*ProcessInfo {
+	if x != nil {
+		return x.Processes
+	}
+	return nil
+}
+
+func (x *SystemStateEvent) GetTcpConnections() []*ConnectionInfo {
+	if x != nil {
+		return x.TcpConnections
+	}
+	return nil
+}
+
+func (x *SystemStateEvent) GetUdpEndpoints() []*ConnectionInfo {
+	if x != nil {
+		return x.UdpEndpoints
+	}
+	return nil
+}
+
 // 每个 Event 包含 Agent 身份 + 一个具体事件
 type Event struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
@@ -1077,6 +1308,7 @@ type Event struct {
 	//	*Event_ScheduledTask
 	//	*Event_YaraMatch
 	//	*Event_DnsQuery
+	//	*Event_SystemState
 	EventType     isEvent_EventType `protobuf_oneof:"event_type"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1084,7 +1316,7 @@ type Event struct {
 
 func (x *Event) Reset() {
 	*x = Event{}
-	mi := &file_baize_v1_baize_proto_msgTypes[11]
+	mi := &file_baize_v1_baize_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1096,7 +1328,7 @@ func (x *Event) String() string {
 func (*Event) ProtoMessage() {}
 
 func (x *Event) ProtoReflect() protoreflect.Message {
-	mi := &file_baize_v1_baize_proto_msgTypes[11]
+	mi := &file_baize_v1_baize_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1109,7 +1341,7 @@ func (x *Event) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Event.ProtoReflect.Descriptor instead.
 func (*Event) Descriptor() ([]byte, []int) {
-	return file_baize_v1_baize_proto_rawDescGZIP(), []int{11}
+	return file_baize_v1_baize_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *Event) GetAgentInfo() *AgentInfo {
@@ -1223,6 +1455,15 @@ func (x *Event) GetDnsQuery() *DnsQueryEvent {
 	return nil
 }
 
+func (x *Event) GetSystemState() *SystemStateEvent {
+	if x != nil {
+		if x, ok := x.EventType.(*Event_SystemState); ok {
+			return x.SystemState
+		}
+	}
+	return nil
+}
+
 type isEvent_EventType interface {
 	isEvent_EventType()
 }
@@ -1267,6 +1508,10 @@ type Event_DnsQuery struct {
 	DnsQuery *DnsQueryEvent `protobuf:"bytes,19,opt,name=dns_query,json=dnsQuery,proto3,oneof"`
 }
 
+type Event_SystemState struct {
+	SystemState *SystemStateEvent `protobuf:"bytes,20,opt,name=system_state,json=systemState,proto3,oneof"`
+}
+
 func (*Event_ProcessCreate) isEvent_EventType() {}
 
 func (*Event_ProcessTerminate) isEvent_EventType() {}
@@ -1286,6 +1531,8 @@ func (*Event_ScheduledTask) isEvent_EventType() {}
 func (*Event_YaraMatch) isEvent_EventType() {}
 
 func (*Event_DnsQuery) isEvent_EventType() {}
+
+func (*Event_SystemState) isEvent_EventType() {}
 
 type Alert struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
@@ -1307,7 +1554,7 @@ type Alert struct {
 
 func (x *Alert) Reset() {
 	*x = Alert{}
-	mi := &file_baize_v1_baize_proto_msgTypes[12]
+	mi := &file_baize_v1_baize_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1319,7 +1566,7 @@ func (x *Alert) String() string {
 func (*Alert) ProtoMessage() {}
 
 func (x *Alert) ProtoReflect() protoreflect.Message {
-	mi := &file_baize_v1_baize_proto_msgTypes[12]
+	mi := &file_baize_v1_baize_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1332,7 +1579,7 @@ func (x *Alert) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Alert.ProtoReflect.Descriptor instead.
 func (*Alert) Descriptor() ([]byte, []int) {
-	return file_baize_v1_baize_proto_rawDescGZIP(), []int{12}
+	return file_baize_v1_baize_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *Alert) GetAlertId() string {
@@ -1423,7 +1670,7 @@ type IsolateCommand struct {
 
 func (x *IsolateCommand) Reset() {
 	*x = IsolateCommand{}
-	mi := &file_baize_v1_baize_proto_msgTypes[13]
+	mi := &file_baize_v1_baize_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1435,7 +1682,7 @@ func (x *IsolateCommand) String() string {
 func (*IsolateCommand) ProtoMessage() {}
 
 func (x *IsolateCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_baize_v1_baize_proto_msgTypes[13]
+	mi := &file_baize_v1_baize_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1448,7 +1695,7 @@ func (x *IsolateCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IsolateCommand.ProtoReflect.Descriptor instead.
 func (*IsolateCommand) Descriptor() ([]byte, []int) {
-	return file_baize_v1_baize_proto_rawDescGZIP(), []int{13}
+	return file_baize_v1_baize_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *IsolateCommand) GetIsolate() bool {
@@ -1476,7 +1723,7 @@ type KillProcessCommand struct {
 
 func (x *KillProcessCommand) Reset() {
 	*x = KillProcessCommand{}
-	mi := &file_baize_v1_baize_proto_msgTypes[14]
+	mi := &file_baize_v1_baize_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1488,7 +1735,7 @@ func (x *KillProcessCommand) String() string {
 func (*KillProcessCommand) ProtoMessage() {}
 
 func (x *KillProcessCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_baize_v1_baize_proto_msgTypes[14]
+	mi := &file_baize_v1_baize_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1501,7 +1748,7 @@ func (x *KillProcessCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KillProcessCommand.ProtoReflect.Descriptor instead.
 func (*KillProcessCommand) Descriptor() ([]byte, []int) {
-	return file_baize_v1_baize_proto_rawDescGZIP(), []int{14}
+	return file_baize_v1_baize_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *KillProcessCommand) GetPid() uint64 {
@@ -1530,7 +1777,7 @@ type DeleteFileCommand struct {
 
 func (x *DeleteFileCommand) Reset() {
 	*x = DeleteFileCommand{}
-	mi := &file_baize_v1_baize_proto_msgTypes[15]
+	mi := &file_baize_v1_baize_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1542,7 +1789,7 @@ func (x *DeleteFileCommand) String() string {
 func (*DeleteFileCommand) ProtoMessage() {}
 
 func (x *DeleteFileCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_baize_v1_baize_proto_msgTypes[15]
+	mi := &file_baize_v1_baize_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1555,7 +1802,7 @@ func (x *DeleteFileCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteFileCommand.ProtoReflect.Descriptor instead.
 func (*DeleteFileCommand) Descriptor() ([]byte, []int) {
-	return file_baize_v1_baize_proto_rawDescGZIP(), []int{15}
+	return file_baize_v1_baize_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *DeleteFileCommand) GetFilePath() string {
@@ -1592,7 +1839,7 @@ type ExecuteScriptCommand struct {
 
 func (x *ExecuteScriptCommand) Reset() {
 	*x = ExecuteScriptCommand{}
-	mi := &file_baize_v1_baize_proto_msgTypes[16]
+	mi := &file_baize_v1_baize_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1604,7 +1851,7 @@ func (x *ExecuteScriptCommand) String() string {
 func (*ExecuteScriptCommand) ProtoMessage() {}
 
 func (x *ExecuteScriptCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_baize_v1_baize_proto_msgTypes[16]
+	mi := &file_baize_v1_baize_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1617,7 +1864,7 @@ func (x *ExecuteScriptCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecuteScriptCommand.ProtoReflect.Descriptor instead.
 func (*ExecuteScriptCommand) Descriptor() ([]byte, []int) {
-	return file_baize_v1_baize_proto_rawDescGZIP(), []int{16}
+	return file_baize_v1_baize_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ExecuteScriptCommand) GetScriptContent() string {
@@ -1659,7 +1906,7 @@ type ConfigureFileWatchCommand struct {
 
 func (x *ConfigureFileWatchCommand) Reset() {
 	*x = ConfigureFileWatchCommand{}
-	mi := &file_baize_v1_baize_proto_msgTypes[17]
+	mi := &file_baize_v1_baize_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1671,7 +1918,7 @@ func (x *ConfigureFileWatchCommand) String() string {
 func (*ConfigureFileWatchCommand) ProtoMessage() {}
 
 func (x *ConfigureFileWatchCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_baize_v1_baize_proto_msgTypes[17]
+	mi := &file_baize_v1_baize_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1684,7 +1931,7 @@ func (x *ConfigureFileWatchCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfigureFileWatchCommand.ProtoReflect.Descriptor instead.
 func (*ConfigureFileWatchCommand) Descriptor() ([]byte, []int) {
-	return file_baize_v1_baize_proto_rawDescGZIP(), []int{17}
+	return file_baize_v1_baize_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ConfigureFileWatchCommand) GetWatchDirs() []string {
@@ -1715,7 +1962,7 @@ type ConfigureEventTypesCommand struct {
 
 func (x *ConfigureEventTypesCommand) Reset() {
 	*x = ConfigureEventTypesCommand{}
-	mi := &file_baize_v1_baize_proto_msgTypes[18]
+	mi := &file_baize_v1_baize_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1727,7 +1974,7 @@ func (x *ConfigureEventTypesCommand) String() string {
 func (*ConfigureEventTypesCommand) ProtoMessage() {}
 
 func (x *ConfigureEventTypesCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_baize_v1_baize_proto_msgTypes[18]
+	mi := &file_baize_v1_baize_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1740,7 +1987,7 @@ func (x *ConfigureEventTypesCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfigureEventTypesCommand.ProtoReflect.Descriptor instead.
 func (*ConfigureEventTypesCommand) Descriptor() ([]byte, []int) {
-	return file_baize_v1_baize_proto_rawDescGZIP(), []int{18}
+	return file_baize_v1_baize_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *ConfigureEventTypesCommand) GetCategories() map[string]bool {
@@ -1778,7 +2025,7 @@ type Command struct {
 
 func (x *Command) Reset() {
 	*x = Command{}
-	mi := &file_baize_v1_baize_proto_msgTypes[19]
+	mi := &file_baize_v1_baize_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1790,7 +2037,7 @@ func (x *Command) String() string {
 func (*Command) ProtoMessage() {}
 
 func (x *Command) ProtoReflect() protoreflect.Message {
-	mi := &file_baize_v1_baize_proto_msgTypes[19]
+	mi := &file_baize_v1_baize_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1803,7 +2050,7 @@ func (x *Command) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Command.ProtoReflect.Descriptor instead.
 func (*Command) Descriptor() ([]byte, []int) {
-	return file_baize_v1_baize_proto_rawDescGZIP(), []int{19}
+	return file_baize_v1_baize_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *Command) GetCommandId() string {
@@ -1946,7 +2193,7 @@ type QuerySystemInfoCommand struct {
 
 func (x *QuerySystemInfoCommand) Reset() {
 	*x = QuerySystemInfoCommand{}
-	mi := &file_baize_v1_baize_proto_msgTypes[20]
+	mi := &file_baize_v1_baize_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1958,7 +2205,7 @@ func (x *QuerySystemInfoCommand) String() string {
 func (*QuerySystemInfoCommand) ProtoMessage() {}
 
 func (x *QuerySystemInfoCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_baize_v1_baize_proto_msgTypes[20]
+	mi := &file_baize_v1_baize_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1971,7 +2218,7 @@ func (x *QuerySystemInfoCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QuerySystemInfoCommand.ProtoReflect.Descriptor instead.
 func (*QuerySystemInfoCommand) Descriptor() ([]byte, []int) {
-	return file_baize_v1_baize_proto_rawDescGZIP(), []int{20}
+	return file_baize_v1_baize_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *QuerySystemInfoCommand) GetReason() string {
@@ -1994,7 +2241,7 @@ type CommandResult struct {
 
 func (x *CommandResult) Reset() {
 	*x = CommandResult{}
-	mi := &file_baize_v1_baize_proto_msgTypes[21]
+	mi := &file_baize_v1_baize_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2006,7 +2253,7 @@ func (x *CommandResult) String() string {
 func (*CommandResult) ProtoMessage() {}
 
 func (x *CommandResult) ProtoReflect() protoreflect.Message {
-	mi := &file_baize_v1_baize_proto_msgTypes[21]
+	mi := &file_baize_v1_baize_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2019,7 +2266,7 @@ func (x *CommandResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommandResult.ProtoReflect.Descriptor instead.
 func (*CommandResult) Descriptor() ([]byte, []int) {
-	return file_baize_v1_baize_proto_rawDescGZIP(), []int{21}
+	return file_baize_v1_baize_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *CommandResult) GetCommandId() string {
@@ -2065,7 +2312,7 @@ type Empty struct {
 
 func (x *Empty) Reset() {
 	*x = Empty{}
-	mi := &file_baize_v1_baize_proto_msgTypes[22]
+	mi := &file_baize_v1_baize_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2077,7 +2324,7 @@ func (x *Empty) String() string {
 func (*Empty) ProtoMessage() {}
 
 func (x *Empty) ProtoReflect() protoreflect.Message {
-	mi := &file_baize_v1_baize_proto_msgTypes[22]
+	mi := &file_baize_v1_baize_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2090,7 +2337,7 @@ func (x *Empty) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Empty.ProtoReflect.Descriptor instead.
 func (*Empty) Descriptor() ([]byte, []int) {
-	return file_baize_v1_baize_proto_rawDescGZIP(), []int{22}
+	return file_baize_v1_baize_proto_rawDescGZIP(), []int{25}
 }
 
 var File_baize_v1_baize_proto protoreflect.FileDescriptor
@@ -2206,7 +2453,27 @@ const file_baize_v1_baize_proto_rawDesc = "" +
 	"query_type\x18\x04 \x01(\tR\tqueryType\x12\x1d\n" +
 	"\n" +
 	"result_ips\x18\x05 \x01(\tR\tresultIps\x12!\n" +
-	"\ftimestamp_ns\x18\x06 \x01(\x04R\vtimestampNs\"\x92\x06\n" +
+	"\ftimestamp_ns\x18\x06 \x01(\x04R\vtimestampNs\"o\n" +
+	"\vProcessInfo\x12\x10\n" +
+	"\x03pid\x18\x01 \x01(\x04R\x03pid\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x10\n" +
+	"\x03exe\x18\x03 \x01(\tR\x03exe\x12\x10\n" +
+	"\x03cpu\x18\x04 \x01(\x02R\x03cpu\x12\x16\n" +
+	"\x06memory\x18\x05 \x01(\x04R\x06memory\"\xb0\x01\n" +
+	"\x0eConnectionInfo\x12\x10\n" +
+	"\x03pid\x18\x01 \x01(\x04R\x03pid\x12\x19\n" +
+	"\blocal_ip\x18\x02 \x01(\tR\alocalIp\x12\x1d\n" +
+	"\n" +
+	"local_port\x18\x03 \x01(\rR\tlocalPort\x12\x1b\n" +
+	"\tremote_ip\x18\x04 \x01(\tR\bremoteIp\x12\x1f\n" +
+	"\vremote_port\x18\x05 \x01(\rR\n" +
+	"remotePort\x12\x14\n" +
+	"\x05state\x18\x06 \x01(\tR\x05state\"\xef\x01\n" +
+	"\x10SystemStateEvent\x12$\n" +
+	"\x0ecaptured_at_ns\x18\x01 \x01(\x04R\fcapturedAtNs\x123\n" +
+	"\tprocesses\x18\x02 \x03(\v2\x15.baize.v1.ProcessInfoR\tprocesses\x12A\n" +
+	"\x0ftcp_connections\x18\x03 \x03(\v2\x18.baize.v1.ConnectionInfoR\x0etcpConnections\x12=\n" +
+	"\rudp_endpoints\x18\x04 \x03(\v2\x18.baize.v1.ConnectionInfoR\fudpEndpoints\"\xd3\x06\n" +
 	"\x05Event\x122\n" +
 	"\n" +
 	"agent_info\x18\x01 \x01(\v2\x13.baize.v1.AgentInfoR\tagentInfo\x12\x1f\n" +
@@ -2226,7 +2493,8 @@ const file_baize_v1_baize_proto_rawDesc = "" +
 	"\x0escheduled_task\x18\x11 \x01(\v2\x1c.baize.v1.ScheduledTaskEventH\x00R\rscheduledTask\x129\n" +
 	"\n" +
 	"yara_match\x18\x12 \x01(\v2\x18.baize.v1.YaraMatchEventH\x00R\tyaraMatch\x126\n" +
-	"\tdns_query\x18\x13 \x01(\v2\x17.baize.v1.DnsQueryEventH\x00R\bdnsQueryB\f\n" +
+	"\tdns_query\x18\x13 \x01(\v2\x17.baize.v1.DnsQueryEventH\x00R\bdnsQuery\x12?\n" +
+	"\fsystem_state\x18\x14 \x01(\v2\x1a.baize.v1.SystemStateEventH\x00R\vsystemStateB\f\n" +
 	"\n" +
 	"event_type\"\xf2\x02\n" +
 	"\x05Alert\x12\x19\n" +
@@ -2311,7 +2579,7 @@ func file_baize_v1_baize_proto_rawDescGZIP() []byte {
 	return file_baize_v1_baize_proto_rawDescData
 }
 
-var file_baize_v1_baize_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
+var file_baize_v1_baize_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
 var file_baize_v1_baize_proto_goTypes = []any{
 	(*AgentInfo)(nil),                  // 0: baize.v1.AgentInfo
 	(*ProcessCreateEvent)(nil),         // 1: baize.v1.ProcessCreateEvent
@@ -2324,52 +2592,59 @@ var file_baize_v1_baize_proto_goTypes = []any{
 	(*ScheduledTaskEvent)(nil),         // 8: baize.v1.ScheduledTaskEvent
 	(*YaraMatchEvent)(nil),             // 9: baize.v1.YaraMatchEvent
 	(*DnsQueryEvent)(nil),              // 10: baize.v1.DnsQueryEvent
-	(*Event)(nil),                      // 11: baize.v1.Event
-	(*Alert)(nil),                      // 12: baize.v1.Alert
-	(*IsolateCommand)(nil),             // 13: baize.v1.IsolateCommand
-	(*KillProcessCommand)(nil),         // 14: baize.v1.KillProcessCommand
-	(*DeleteFileCommand)(nil),          // 15: baize.v1.DeleteFileCommand
-	(*ExecuteScriptCommand)(nil),       // 16: baize.v1.ExecuteScriptCommand
-	(*ConfigureFileWatchCommand)(nil),  // 17: baize.v1.ConfigureFileWatchCommand
-	(*ConfigureEventTypesCommand)(nil), // 18: baize.v1.ConfigureEventTypesCommand
-	(*Command)(nil),                    // 19: baize.v1.Command
-	(*QuerySystemInfoCommand)(nil),     // 20: baize.v1.QuerySystemInfoCommand
-	(*CommandResult)(nil),              // 21: baize.v1.CommandResult
-	(*Empty)(nil),                      // 22: baize.v1.Empty
-	nil,                                // 23: baize.v1.ConfigureEventTypesCommand.CategoriesEntry
+	(*ProcessInfo)(nil),                // 11: baize.v1.ProcessInfo
+	(*ConnectionInfo)(nil),             // 12: baize.v1.ConnectionInfo
+	(*SystemStateEvent)(nil),           // 13: baize.v1.SystemStateEvent
+	(*Event)(nil),                      // 14: baize.v1.Event
+	(*Alert)(nil),                      // 15: baize.v1.Alert
+	(*IsolateCommand)(nil),             // 16: baize.v1.IsolateCommand
+	(*KillProcessCommand)(nil),         // 17: baize.v1.KillProcessCommand
+	(*DeleteFileCommand)(nil),          // 18: baize.v1.DeleteFileCommand
+	(*ExecuteScriptCommand)(nil),       // 19: baize.v1.ExecuteScriptCommand
+	(*ConfigureFileWatchCommand)(nil),  // 20: baize.v1.ConfigureFileWatchCommand
+	(*ConfigureEventTypesCommand)(nil), // 21: baize.v1.ConfigureEventTypesCommand
+	(*Command)(nil),                    // 22: baize.v1.Command
+	(*QuerySystemInfoCommand)(nil),     // 23: baize.v1.QuerySystemInfoCommand
+	(*CommandResult)(nil),              // 24: baize.v1.CommandResult
+	(*Empty)(nil),                      // 25: baize.v1.Empty
+	nil,                                // 26: baize.v1.ConfigureEventTypesCommand.CategoriesEntry
 }
 var file_baize_v1_baize_proto_depIdxs = []int32{
-	0,  // 0: baize.v1.Event.agent_info:type_name -> baize.v1.AgentInfo
-	1,  // 1: baize.v1.Event.process_create:type_name -> baize.v1.ProcessCreateEvent
-	2,  // 2: baize.v1.Event.process_terminate:type_name -> baize.v1.ProcessTerminateEvent
-	3,  // 3: baize.v1.Event.file_create:type_name -> baize.v1.FileCreateEvent
-	4,  // 4: baize.v1.Event.file_modify:type_name -> baize.v1.FileModifyEvent
-	5,  // 5: baize.v1.Event.file_delete:type_name -> baize.v1.FileDeleteEvent
-	6,  // 6: baize.v1.Event.network_connection:type_name -> baize.v1.NetworkConnectionEvent
-	7,  // 7: baize.v1.Event.registry_change:type_name -> baize.v1.RegistryChangeEvent
-	8,  // 8: baize.v1.Event.scheduled_task:type_name -> baize.v1.ScheduledTaskEvent
-	9,  // 9: baize.v1.Event.yara_match:type_name -> baize.v1.YaraMatchEvent
-	10, // 10: baize.v1.Event.dns_query:type_name -> baize.v1.DnsQueryEvent
-	11, // 11: baize.v1.Alert.source_events:type_name -> baize.v1.Event
-	23, // 12: baize.v1.ConfigureEventTypesCommand.categories:type_name -> baize.v1.ConfigureEventTypesCommand.CategoriesEntry
-	13, // 13: baize.v1.Command.isolate:type_name -> baize.v1.IsolateCommand
-	14, // 14: baize.v1.Command.kill_process:type_name -> baize.v1.KillProcessCommand
-	15, // 15: baize.v1.Command.delete_file:type_name -> baize.v1.DeleteFileCommand
-	16, // 16: baize.v1.Command.execute_script:type_name -> baize.v1.ExecuteScriptCommand
-	17, // 17: baize.v1.Command.configure_file_watch:type_name -> baize.v1.ConfigureFileWatchCommand
-	20, // 18: baize.v1.Command.query_system_info:type_name -> baize.v1.QuerySystemInfoCommand
-	18, // 19: baize.v1.Command.configure_event_types:type_name -> baize.v1.ConfigureEventTypesCommand
-	11, // 20: baize.v1.BaizeService.AgentStream:input_type -> baize.v1.Event
-	21, // 21: baize.v1.BaizeService.ReportCommandResult:input_type -> baize.v1.CommandResult
-	0,  // 22: baize.v1.BaizeService.Heartbeat:input_type -> baize.v1.AgentInfo
-	19, // 23: baize.v1.BaizeService.AgentStream:output_type -> baize.v1.Command
-	22, // 24: baize.v1.BaizeService.ReportCommandResult:output_type -> baize.v1.Empty
-	22, // 25: baize.v1.BaizeService.Heartbeat:output_type -> baize.v1.Empty
-	23, // [23:26] is the sub-list for method output_type
-	20, // [20:23] is the sub-list for method input_type
-	20, // [20:20] is the sub-list for extension type_name
-	20, // [20:20] is the sub-list for extension extendee
-	0,  // [0:20] is the sub-list for field type_name
+	11, // 0: baize.v1.SystemStateEvent.processes:type_name -> baize.v1.ProcessInfo
+	12, // 1: baize.v1.SystemStateEvent.tcp_connections:type_name -> baize.v1.ConnectionInfo
+	12, // 2: baize.v1.SystemStateEvent.udp_endpoints:type_name -> baize.v1.ConnectionInfo
+	0,  // 3: baize.v1.Event.agent_info:type_name -> baize.v1.AgentInfo
+	1,  // 4: baize.v1.Event.process_create:type_name -> baize.v1.ProcessCreateEvent
+	2,  // 5: baize.v1.Event.process_terminate:type_name -> baize.v1.ProcessTerminateEvent
+	3,  // 6: baize.v1.Event.file_create:type_name -> baize.v1.FileCreateEvent
+	4,  // 7: baize.v1.Event.file_modify:type_name -> baize.v1.FileModifyEvent
+	5,  // 8: baize.v1.Event.file_delete:type_name -> baize.v1.FileDeleteEvent
+	6,  // 9: baize.v1.Event.network_connection:type_name -> baize.v1.NetworkConnectionEvent
+	7,  // 10: baize.v1.Event.registry_change:type_name -> baize.v1.RegistryChangeEvent
+	8,  // 11: baize.v1.Event.scheduled_task:type_name -> baize.v1.ScheduledTaskEvent
+	9,  // 12: baize.v1.Event.yara_match:type_name -> baize.v1.YaraMatchEvent
+	10, // 13: baize.v1.Event.dns_query:type_name -> baize.v1.DnsQueryEvent
+	13, // 14: baize.v1.Event.system_state:type_name -> baize.v1.SystemStateEvent
+	14, // 15: baize.v1.Alert.source_events:type_name -> baize.v1.Event
+	26, // 16: baize.v1.ConfigureEventTypesCommand.categories:type_name -> baize.v1.ConfigureEventTypesCommand.CategoriesEntry
+	16, // 17: baize.v1.Command.isolate:type_name -> baize.v1.IsolateCommand
+	17, // 18: baize.v1.Command.kill_process:type_name -> baize.v1.KillProcessCommand
+	18, // 19: baize.v1.Command.delete_file:type_name -> baize.v1.DeleteFileCommand
+	19, // 20: baize.v1.Command.execute_script:type_name -> baize.v1.ExecuteScriptCommand
+	20, // 21: baize.v1.Command.configure_file_watch:type_name -> baize.v1.ConfigureFileWatchCommand
+	23, // 22: baize.v1.Command.query_system_info:type_name -> baize.v1.QuerySystemInfoCommand
+	21, // 23: baize.v1.Command.configure_event_types:type_name -> baize.v1.ConfigureEventTypesCommand
+	14, // 24: baize.v1.BaizeService.AgentStream:input_type -> baize.v1.Event
+	24, // 25: baize.v1.BaizeService.ReportCommandResult:input_type -> baize.v1.CommandResult
+	0,  // 26: baize.v1.BaizeService.Heartbeat:input_type -> baize.v1.AgentInfo
+	22, // 27: baize.v1.BaizeService.AgentStream:output_type -> baize.v1.Command
+	25, // 28: baize.v1.BaizeService.ReportCommandResult:output_type -> baize.v1.Empty
+	25, // 29: baize.v1.BaizeService.Heartbeat:output_type -> baize.v1.Empty
+	27, // [27:30] is the sub-list for method output_type
+	24, // [24:27] is the sub-list for method input_type
+	24, // [24:24] is the sub-list for extension type_name
+	24, // [24:24] is the sub-list for extension extendee
+	0,  // [0:24] is the sub-list for field type_name
 }
 
 func init() { file_baize_v1_baize_proto_init() }
@@ -2377,7 +2652,7 @@ func file_baize_v1_baize_proto_init() {
 	if File_baize_v1_baize_proto != nil {
 		return
 	}
-	file_baize_v1_baize_proto_msgTypes[11].OneofWrappers = []any{
+	file_baize_v1_baize_proto_msgTypes[14].OneofWrappers = []any{
 		(*Event_ProcessCreate)(nil),
 		(*Event_ProcessTerminate)(nil),
 		(*Event_FileCreate)(nil),
@@ -2388,8 +2663,9 @@ func file_baize_v1_baize_proto_init() {
 		(*Event_ScheduledTask)(nil),
 		(*Event_YaraMatch)(nil),
 		(*Event_DnsQuery)(nil),
+		(*Event_SystemState)(nil),
 	}
-	file_baize_v1_baize_proto_msgTypes[19].OneofWrappers = []any{
+	file_baize_v1_baize_proto_msgTypes[22].OneofWrappers = []any{
 		(*Command_Isolate)(nil),
 		(*Command_KillProcess)(nil),
 		(*Command_DeleteFile)(nil),
@@ -2404,7 +2680,7 @@ func file_baize_v1_baize_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_baize_v1_baize_proto_rawDesc), len(file_baize_v1_baize_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   24,
+			NumMessages:   27,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

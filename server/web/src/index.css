@@ -79,6 +79,10 @@ h1 { font-family: var(--font); font-size: 1.25rem; font-weight: 700; }
 .clickable { cursor: pointer; }
 .action { text-align: center; }
 .scroll-table { max-height: 400px; overflow-y: auto; display: block; }
+/* 固定表头：滚动时表头吸顶，背景不透明盖住内容 */
+.scroll-table thead th { position: sticky; top: 0; background: var(--card); z-index: 1; }
+/* 长文本截断：路径等超长列限宽 + 省略号，悬停 title 看完整 */
+.td-ellipsis { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .link { color: #60a5fa; cursor: pointer; }
 .link:hover { text-decoration: underline; }
 .back { cursor: pointer; color: var(--accent); margin-right: 0.3rem; font-size: 1.1rem; }

@@ -4,6 +4,7 @@ package store
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math"
@@ -22,9 +23,10 @@ import (
 )
 
 const (
-	eventType = "event"
-	alertType = "alert"
-	hostType  = "host"
+	eventType       = "event"
+	alertType       = "alert"
+	hostType        = "host"
+	systemStateType = "system_state"
 )
 
 // hostUpdateInterval 事件流更新 host 文档的节流间隔（避免事件密集时写放大）
@@ -392,6 +394,113 @@ func (s *Store) RebuildHosts() (int, error) {
 		}
 	}
 	return len(terms), nil
+}
+
+// ── 系统状态 ──────────────────────────────────────────────
+// 状态是 Agent 首次上线 / 手动刷新时上报的当前系统状态（进程 + TCP/UDP 连接）。
+// 独立实体（type:system_state），docID = state-<agent_id>，同 id 覆盖 = 只存最新一份。
+// 与事件/告警不同：状态不进检测引擎、不进事件索引。
+
+// SystemStateDoc 系统状态文档（列表字段存 JSON 字符串，取回后反序列化）
+type SystemStateDoc struct {
+	Type           string `json:"type"`
+	AgentID        string `json:"agent_id"`
+	Hostname       string `json:"hostname"`
+	CapturedAt     string `json:"captured_at"` // Agent 侧采集时间 (RFC3339)
+	ReceivedAt     string `json:"received_at"` // Server 侧收到时间 (RFC3339)
+	Processes      string `json:"processes"`       // JSON: []pb.ProcessInfo
+	TCPConnections string `json:"tcp_connections"` // JSON: []pb.ConnectionInfo
+	UDPEndpoints   string `json:"udp_endpoints"`   // JSON: []pb.ConnectionInfo
+}
+
+// WriteSystemState 存储/覆盖系统状态（幂等 upsert）
+// 调用方：AgentStream 收到 SystemStateEvent（首次上线 / 手动刷新）
+func (s *Store) WriteSystemState(st *pb.SystemStateEvent, info *pb.AgentInfo) error {
+	if st == nil || info == nil || info.GetAgentId() == "" {
+		return nil
+	}
+	// JSON 序列化兜底：cpu 等 float 可能为 NaN（JSON 不支持），Marshal 失败时用空数组，不丢整条状态
+	marshal := func(v interface{}) string {
+		b, err := json.Marshal(v)
+		if err != nil {
+			log.Printf("[State] 序列化失败: %v", err)
+			return "[]"
+		}
+		return string(b)
+	}
+	doc := &SystemStateDoc{
+		Type:           systemStateType,
+		AgentID:        info.GetAgentId(),
+		Hostname:       info.GetHostname(),
+		CapturedAt:     formatNs(st.GetCapturedAtNs()),
+		ReceivedAt:     time.Now().UTC().Format(time.RFC3339),
+		Processes:      marshal(st.GetProcesses()),
+		TCPConnections: marshal(st.GetTcpConnections()),
+		UDPEndpoints:   marshal(st.GetUdpEndpoints()),
+	}
+	return s.index.Index("state-"+info.GetAgentId(), doc)
+}
+
+// GetSystemState 读取某 Agent 的系统状态（不存在返回 nil, nil）
+// 供 Dashboard 资产展示 API 使用
+// 读取策略：标量字段走 search.Fields（date 字段如 captured_at 会被自动识别为
+// date 存储，Document().Value() 返回二进制存储格式，search.Fields 还原为字符串）；
+// 大 JSON 字段走 Document()（search.Fields 会按词分词破坏 JSON，Document 返回原始值）。
+func (s *Store) GetSystemState(agentID string) (*SystemStateDoc, error) {
+	if agentID == "" {
+		return nil, nil
+	}
+
+	// 1. 标量字段：search.Fields 提取
+	// 注意：不用 query string（agent_id 含连字符等特殊字符时解析失效），用 TermQuery 精确匹配
+	agentQ := bleve.NewTermQuery(agentID)
+	agentQ.SetField("agent_id")
+	typeQ := bleve.NewTermQuery(systemStateType)
+	typeQ.SetField("type")
+	q := bleve.NewConjunctionQuery(typeQ, agentQ)
+	search := bleve.NewSearchRequest(q)
+	search.Size = 1
+	search.Fields = []string{"agent_id", "hostname", "captured_at", "received_at"}
+	result, err := s.index.Search(search)
+	if err != nil {
+		return nil, err
+	}
+	if len(result.Hits) == 0 {
+		return nil, nil
+	}
+	hit := result.Hits[0]
+	res := &SystemStateDoc{
+		Type:       systemStateType,
+		AgentID:    getFieldStr(hit.Fields, "agent_id"),
+		Hostname:   getFieldStr(hit.Fields, "hostname"),
+		CapturedAt: getFieldStr(hit.Fields, "captured_at"),
+		ReceivedAt: getFieldStr(hit.Fields, "received_at"),
+	}
+
+	// 2. 大 JSON 字段：Document() 读原始存储值
+	doc, err := s.index.Document("state-" + agentID)
+	if err != nil || doc == nil {
+		return res, err
+	}
+	doc.VisitFields(func(f index.Field) {
+		switch f.Name() {
+		case "processes":
+			res.Processes = string(f.Value())
+		case "tcp_connections":
+			res.TCPConnections = string(f.Value())
+		case "udp_endpoints":
+			res.UDPEndpoints = string(f.Value())
+		}
+	})
+	return res, nil
+}
+
+// formatNs 纳秒时间戳 → RFC3339 (UTC)
+func formatNs(ns uint64) string {
+	if ns == 0 {
+		return ""
+	}
+	return time.Unix(int64(ns/1_000_000_000), int64(ns%1_000_000_000)).UTC().Format(time.RFC3339)
 }
 
 // ── 查询方法 ──────────────────────────────────────────────
