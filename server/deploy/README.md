@@ -116,7 +116,7 @@ build_msi.bat ..\target\debug\baize-agent.exe
 
 ## 四、Agent 机器安装（约 5 分钟）
 
-**方式 A：一条命令（推荐，目标机管理员 PowerShell）**——先从 Dashboard 下载页生成/复制注册 token：
+**方式 A：一条命令（推荐，目标机 PowerShell，脚本自动提权）**——先从 Dashboard 下载页生成/复制注册 token：
 
 ```powershell
 curl.exe -k -o baize.zip "https://192.168.1.10:8080/api/agent/package"
@@ -143,7 +143,7 @@ powershell -Command "Get-Content C:\ProgramData\Baize\agent.log -Tail 15 | Selec
 :: 应见：已启用 TLS, CA: ... + Agent 注册成功 + 已连接到 Server: https://192.168.1.10:50051
 ```
 
-**Agent 卸载**（设置→应用→Baize Agent，或运行 `C:\Program Files\Baize\uninstall.bat`；管理员）：
+**Agent 卸载**（设置→应用→Baize Agent，或运行 `C:\Program Files\Baize\uninstall.bat`；脚本自动提权）：
 
 ```
 uninstall.bat [/S]
