@@ -9,6 +9,9 @@
 package api
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -38,7 +41,9 @@ type AgentRecord struct {
 	LastSeen     string `json:"last_seen,omitempty"` // 最近连接/心跳时间
 }
 
-// TokenRecord enrollment token 的记录（明文只在创建时返回一次，落盘只存 hash）
+// TokenRecord enrollment token 的记录
+//   - Plain：AES-256-GCM 密文（hex），密钥由 auth.json secret_key 派生；明文只在创建/查看时可见
+//   - 兼容旧数据：早期版本只存 sha256（Plain 为空），无法还原明文，可吊销重建
 type TokenRecord struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
@@ -46,6 +51,10 @@ type TokenRecord struct {
 	Revoked   bool   `json:"revoked,omitempty"`
 	// UsedCount 记录该 token 已注册过的 Agent 数（展示用）
 	UsedCount int `json:"used_count,omitempty"`
+	// Plain 明文密文（hex），不直接序列化明文；列表接口不回传，仅按 id 查询时解密
+	Plain string `json:"plain,omitempty"`
+	// Masked 部分显示（前 6 + 后 4 位），列表展示用，由 ListTokens 解密生成
+	Masked string `json:"masked,omitempty"`
 }
 
 type registryFile struct {
@@ -55,15 +64,17 @@ type registryFile struct {
 
 // AgentRegistry 线程安全的注册表
 type AgentRegistry struct {
-	path string
-	mu   sync.RWMutex
-	data registryFile
+	path   string
+	encKey []byte // AES-256 密钥（由 auth.json secret_key HMAC 派生），用于 token 明文加解密
+	mu     sync.RWMutex
+	data   registryFile
 }
 
 // NewAgentRegistry 加载或初始化注册表。
+// master：JWT 签名密钥（auth.json secret_key），派生 token 加密密钥（域分离，不与 JWT 直接共用）。
 // 首次初始化（无任何 token）时自动生成一个 token 并打印到日志（对标 Wazuh 随机注册密码）。
-func NewAgentRegistry(path string) *AgentRegistry {
-	reg := &AgentRegistry{path: path, data: registryFile{
+func NewAgentRegistry(path string, master []byte) *AgentRegistry {
+	reg := &AgentRegistry{path: path, encKey: deriveTokenKey(master), data: registryFile{
 		Tokens: make(map[string]*TokenRecord),
 		Agents: make(map[string]*AgentRecord),
 	}}
@@ -107,7 +118,7 @@ func (r *AgentRegistry) save() {
 // ── Token 管理 ──────────────────────────────────────────
 
 // CreateToken 生成新的 enrollment token，返回 (明文 token, 记录 ID)。
-// 明文只在创建时返回一次，落盘只存 SHA256。
+// 明文只在创建时返回一次；落盘存 AES-GCM 密文（可按 id 解密查看/复制）。
 func (r *AgentRegistry) CreateToken(name string) (string, string) {
 	raw := make([]byte, 18)
 	rand.Read(raw)
@@ -123,12 +134,13 @@ func (r *AgentRegistry) CreateToken(name string) (string, string) {
 		ID:        id,
 		Name:      name,
 		CreatedAt: time.Now().Format(time.RFC3339),
+		Plain:     encryptToken(token, r.encKey),
 	}
 	r.save()
 	return token, id
 }
 
-// ListTokens 返回全部 token 记录（不含明文），按创建时间排序
+// ListTokens 返回全部 token 记录（不含明文，仅部分掩码），按创建时间排序
 func (r *AgentRegistry) ListTokens() []TokenRecord {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -141,10 +153,33 @@ func (r *AgentRegistry) ListTokens() []TokenRecord {
 				rec.UsedCount++
 			}
 		}
+		// 列表只暴露部分掩码（前 6 + 后 4），供辨认
+		if rec.Plain != "" {
+			if plain, ok := decryptToken(rec.Plain, r.encKey); ok {
+				rec.Masked = maskToken(plain)
+			}
+		}
+		rec.Plain = "" // 密文也不回传列表
 		list = append(list, rec)
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].CreatedAt > list[j].CreatedAt })
 	return list
+}
+
+// GetTokenPlain 按 id 返回 token 明文（Dashboard 查看/复制用，JWT 保护）。
+// 旧数据（仅存 sha256，无密文）返回 false。
+func (r *AgentRegistry) GetTokenPlain(id string) (string, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, t := range r.data.Tokens {
+		if t.ID == id {
+			if t.Plain == "" {
+				return "", false
+			}
+			return decryptToken(t.Plain, r.encKey)
+		}
+	}
+	return "", false
 }
 
 // RevokeToken 吊销 token（已注册的 Agent 不受影响，仅禁止新的注册）
@@ -264,6 +299,68 @@ func (r *AgentRegistry) ListAgents() []AgentRecord {
 func hashToken(s string) string {
 	h := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(h[:])
+}
+
+// deriveTokenKey 由 JWT 主密钥派生 token 加密密钥（HMAC 域分离，避免与 JWT 签名直接共用）
+func deriveTokenKey(master []byte) []byte {
+	h := hmac.New(sha256.New, master)
+	h.Write([]byte("baize-enrollment-token-v1"))
+	return h.Sum(nil)
+}
+
+// encryptToken AES-256-GCM 加密（nonce 前置拼接），返回 hex
+func encryptToken(plain string, key []byte) string {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		log.Printf("[Registry] AES 初始化失败: %v", err)
+		return ""
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		log.Printf("[Registry] GCM 初始化失败: %v", err)
+		return ""
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		log.Printf("[Registry] nonce 生成失败: %v", err)
+		return ""
+	}
+	sealed := gcm.Seal(nonce, nonce, []byte(plain), nil)
+	return hex.EncodeToString(sealed)
+}
+
+// decryptToken 解密 AES-256-GCM hex 密文（失败返回 false，如密钥不匹配/数据损坏）
+func decryptToken(enc string, key []byte) (string, bool) {
+	raw, err := hex.DecodeString(enc)
+	if err != nil {
+		return "", false
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", false
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", false
+	}
+	if len(raw) < gcm.NonceSize() {
+		return "", false
+	}
+	plain, err := gcm.Open(nil, raw[:gcm.NonceSize()], raw[gcm.NonceSize():], nil)
+	if err != nil {
+		return "", false
+	}
+	return string(plain), true
+}
+
+// maskToken 生成部分掩码用于列表展示：保留前 6 位与后 4 位，中间打点，等长 42 字符
+// 例如 baize-3f2a91••••••••••••••••••••••••9c1e
+func maskToken(plain string) string {
+	if len(plain) < 20 {
+		return ""
+	}
+	const dots = "••••••••••••••••••••••••••"
+	return plain[:12] + dots + plain[len(plain)-4:]
 }
 
 var tokenSeq int64

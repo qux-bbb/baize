@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type MouseEvent } from 'react'
 import { API, fetchJSON } from './api'
 
 interface AgentInfo {
@@ -20,14 +20,21 @@ interface TokenRec {
   created_at: string
   revoked?: boolean
   used_count?: number
+  masked?: string // 部分掩码（前 6 + 后 4），列表展示用
 }
+
+// 本地掩码（与后端 ListTokens 的 masked 一致）：保留前 6 + 后 4 位，中间打点，等长 42 字符
+const MASK_DOTS = '••••••••••••••••••••••••••'
+const maskPlain = (p: string): string =>
+  p && p.length >= 20 ? p.slice(0, 12) + MASK_DOTS + p.slice(-4) : ''
 
 export default function AgentDownload() {
   const [agentInfo, setAgentInfo] = useState<AgentInfo | null>(null)
   const [tokens, setTokens] = useState<TokenRec[]>([])
   const [selectedToken, setSelectedToken] = useState('')
   const [tokenName, setTokenName] = useState('')
-  const [newToken, setNewToken] = useState<{ token: string; id: string } | null>(null)
+  // plainCache: token id → 明文（仅组件内存，用于复制/嵌入命令，不落 localStorage）
+  const [plainCache, setPlainCache] = useState<Record<string, string>>({})
   const [creating, setCreating] = useState(false)
   const [agentMsg, setAgentMsg] = useState('')
 
@@ -51,16 +58,30 @@ export default function AgentDownload() {
     }
   }
 
+  // 取 token 明文（缓存，失败=旧版仅存哈希）
+  const fetchPlain = async (id: string): Promise<string | null> => {
+    if (plainCache[id]) return plainCache[id]
+    try {
+      const d = await fetchJSON<{ token: string }>(`${API}/enrollment-tokens/${id}`)
+      setPlainCache(prev => ({ ...prev, [id]: d.token }))
+      return d.token
+    } catch (e: any) {
+      setAgentMsg('获取 token 明文失败: ' + e.message)
+      return null
+    }
+  }
+
   const createToken = async () => {
     setCreating(true)
-    setNewToken(null)
     try {
       const d = await fetchJSON<{ token: string; id: string }>(`${API}/enrollment-tokens`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: tokenName.trim() || '默认' }),
       })
-      setNewToken(d)
+      // 缓存明文并自动设为当前使用（安装命令嵌入）
+      setPlainCache(prev => ({ ...prev, [d.id]: d.token }))
+      setSelectedToken(d.id)
       setTokenName('')
       loadTokens()
     } catch (e: any) {
@@ -86,20 +107,34 @@ export default function AgentDownload() {
     )
   }
 
-  // 安装命令：目标机（Windows）以管理员身份执行。
-  // token 明文只在创建时返回一次：刚创建时自动嵌入，否则用占位符提示手动填写。
-  const tokenPlain = newToken ? newToken.token : '<注册token>'
+  // 复制完整 token（服务端解密返回，仅内存传递）
+  const copyToken = async (id: string, e: MouseEvent) => {
+    e.stopPropagation()
+    const plain = await fetchPlain(id)
+    if (plain) {
+      copyText(plain, 'token ')
+    } else {
+      setAgentMsg('该 token 为旧版仅存哈希，无法还原明文，可吊销重建')
+    }
+  }
+
+  // 选中 = 设为当前使用（安装命令嵌入该 token），并预取明文
+  const selectToken = async (t: TokenRec) => {
+    setSelectedToken(t.id)
+    await fetchPlain(t.id)
+  }
+
+  // 安装命令：目标机（Windows）以管理员身份在 PowerShell 执行，一条命令完成 下载→解压→安装。
+  // 展示用掩码 token，复制命令时才带完整明文（避免屏幕上/截图泄露明文）。
+  const selectedRec = tokens.find(t => t.id === selectedToken)
+  const tokenPlain = plainCache[selectedToken] || '' // 明文（复制命令用）
+  const tokenMasked = tokenPlain ? maskPlain(tokenPlain) : (selectedRec?.masked || '') // 掩码（展示用）
+  const tokenDisplay = tokenMasked || '<注册token>'
   const buildInstallCmd = () => {
     const origin = window.location.origin
     const addr = agentInfo?.public_addr || '<Server地址>'
-    return [
-      `curl.exe -k -o baize.zip "${origin}/api/agent/package"`,
-      'Expand-Archive baize.zip -Force',
-      `.\\baize\\install.bat ${addr} ${tokenPlain}`,
-    ].join('\n')
+    return `curl.exe -k -o baize.zip "${origin}/api/agent/package"; Expand-Archive baize.zip -Force; .\\baize\\install.bat ${addr} ${tokenPlain || '<注册token>'}`
   }
-
-  // token 明文只在创建时返回一次（列表里只有 id/hash，不展示明文）
 
   return (
     <div className="agent-download">
@@ -129,22 +164,21 @@ export default function AgentDownload() {
         />
         <button onClick={createToken} disabled={creating}>{creating ? '创建中...' : '生成 token'}</button>
       </div>
-      {newToken && (
-        <div className="form-group" style={{ border: '1px solid #fbbf24', padding: '0.6rem', borderRadius: '6px', marginBottom: '0.5rem' }}>
-          <label>新 token（只显示一次，请立即复制）</label>
-          <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
-            <code className="mono" style={{ flex: 1, wordBreak: 'break-all', fontSize: '0.8rem' }}>{newToken.token}</code>
-            <button onClick={() => copyText(newToken.token, 'token ')}>复制</button>
-          </div>
-        </div>
-      )}
       {tokens.length > 0 && (
         <table className="table" style={{ fontSize: '0.75rem', marginBottom: '0.8rem' }}>
-          <thead><tr><th>名称</th><th>创建时间</th><th>已注册</th><th>状态</th><th></th></tr></thead>
+          <thead><tr><th>名称</th><th>Token</th><th>创建时间</th><th>已注册</th><th>状态</th><th></th></tr></thead>
           <tbody>
             {tokens.map(t => (
-              <tr key={t.id} style={{ cursor: 'pointer' }} onClick={() => setSelectedToken(t.id)}>
+              <tr key={t.id} style={{ cursor: 'pointer' }} onClick={() => selectToken(t)}>
                 <td>{t.name} {selectedToken === t.id && '✓'}</td>
+                <td className="mono" style={{ wordBreak: 'break-all' }}>
+                  {t.masked || '••••••••••••••••••••'}
+                  <button
+                    title="复制完整 token"
+                    style={{ marginLeft: '0.4rem', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.85rem' }}
+                    onClick={e => copyToken(t.id, e)}
+                  >📋</button>
+                </td>
                 <td>{t.created_at?.slice(0, 16).replace('T', ' ')}</td>
                 <td>{t.used_count ?? 0}</td>
                 <td>{t.revoked ? <span style={{ color: '#fb7185' }}>已吊销</span> : <span style={{ color: '#22c55e' }}>有效</span>}</td>
@@ -160,20 +194,15 @@ export default function AgentDownload() {
       )}
 
       {/* ── 安装命令 ── */}
-      <h3>🚀 一条命令安装（目标终端执行）</h3>
-      <div style={{ fontSize: '0.75rem', opacity: 0.7, marginBottom: '0.4rem' }}>
-        {newToken
-          ? <span style={{ color: '#fbbf24' }}>已自动嵌入新创建的 token（只显示一次，请尽快复制命令）</span>
-          : <>命令里的 <code style={{ background: '#1e293b', padding: '0 4px' }}>&lt;注册token&gt;</code> 请用上方创建 token 后复制的明文替换</>}
-      </div>
+      <h3>🚀 一条命令安装（目标终端 PowerShell 执行）</h3>
       <pre className="mono" style={{ background: '#0f172a', padding: '0.6rem', borderRadius: '6px', fontSize: '0.72rem', lineHeight: 1.7, overflowX: 'auto', whiteSpace: 'pre-wrap' }}>
-{`curl.exe -k -o baize.zip "${window.location.origin}/api/agent/package"
-Expand-Archive baize.zip -Force
-.\\baize\\install.bat ${agentInfo?.public_addr || '<Server地址>'} ${tokenPlain}`}
+{`curl.exe -k -o baize.zip "${window.location.origin}/api/agent/package"; Expand-Archive baize.zip -Force; .\\baize\\install.bat ${agentInfo?.public_addr || '<Server地址>'} ${tokenDisplay}`}
       </pre>
       <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.4rem', flexWrap: 'wrap' }}>
         <button onClick={() => copyText(buildInstallCmd(), '安装命令')}>复制命令</button>
-        <span style={{ fontSize: '0.72rem', opacity: 0.6, alignSelf: 'center' }}>（curl -k 忽略自签证书校验；包内 SHA256SUMS.txt 可校验完整性）</span>
+        <span style={{ fontSize: '0.72rem', opacity: 0.6, alignSelf: 'center' }}>
+          命令中的 token 展示为掩码，点「复制命令」获取的才是完整 token（请勿手动选中文本复制）。curl -k 忽略自签证书校验；包内 SHA256SUMS.txt 可校验完整性
+        </span>
       </div>
 
       {/* ── 二进制与校验 ── */}

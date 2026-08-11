@@ -347,7 +347,8 @@ func main() {
 	authManager := api.NewAuthManager(authPath)
 
 	// 初始化 Agent 注册表（enrollment token + 通信身份密钥）
-	registry := api.NewAgentRegistry(filepath.Join(*dataDir, "agents.json"))
+	// 传 authManager 密钥用于 token 明文加密存储（派生 AES 密钥）
+	registry := api.NewAgentRegistry(filepath.Join(*dataDir, "agents.json"), authManager.SecretBytes())
 
 	// TLS 证书（自动生成，Agent 需配置 ca 指向 data-dir 的 ca.crt）
 	certFile, keyFile, caFile, err := ensureTLS(*dataDir, *publicAddr)
@@ -386,6 +387,7 @@ func main() {
 			mux.HandleFunc("GET /api/enrollment-tokens", apiHandler.EnrollmentTokens)
 			mux.HandleFunc("POST /api/enrollment-tokens", apiHandler.EnrollmentTokens)
 			mux.HandleFunc("DELETE /api/enrollment-tokens/{id}", apiHandler.EnrollmentTokens)
+			mux.HandleFunc("GET /api/enrollment-tokens/{id}", apiHandler.EnrollmentTokenPlain)
 			mux.HandleFunc("GET /api/alerts", apiHandler.Alerts)
 			mux.HandleFunc("GET /api/alert", apiHandler.AlertDetail)
 			mux.HandleFunc("GET /api/agent/info", apiHandler.AgentInfo)

@@ -168,6 +168,13 @@ func (am *AuthManager) Username() string {
 	return am.cfg.Username
 }
 
+// SecretBytes 返回 JWT 签名密钥（同时作为 enrollment token 加密存储的派生主密钥）
+func (am *AuthManager) SecretBytes() []byte {
+	am.mu.RLock()
+	defer am.mu.RUnlock()
+	return am.secret
+}
+
 // ── JWT ─────────────────────────────────────────────────
 
 const jwtHeader = `{"alg":"HS256","typ":"JWT"}`

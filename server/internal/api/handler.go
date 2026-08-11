@@ -149,6 +149,21 @@ func (h *Handler) EnrollmentTokens(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// EnrollmentTokenPlain 按 id 返回 token 明文（JWT 保护，Dashboard 查看/复制用）
+func (h *Handler) EnrollmentTokenPlain(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "missing id", 400)
+		return
+	}
+	plain, ok := h.reg.GetTokenPlain(id)
+	if !ok {
+		http.Error(w, "token 不存在或为旧版仅存哈希（无法还原明文，可吊销重建）", 404)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"token": plain})
+}
+
 // ── Agent 注册表管理（JWT 保护）──────────────────────────
 
 // AgentList 返回已注册 Agent（注册表视角，含吊销状态）
