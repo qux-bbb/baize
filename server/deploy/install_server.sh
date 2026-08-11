@@ -42,12 +42,56 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# ---- 交互式选择 Server 地址（未传 --public-addr 时自动检测本机 IP 供选择）----
+select_public_addr() {
+  echo ""
+  echo "未指定 Server 地址（--public-addr），正在检测本机 IP..."
+  local ips=() names=()
+  # 检测 IPv4 全局地址：ip 命令优先，hostname -I 兜底
+  if command -v ip >/dev/null 2>&1; then
+    while IFS= read -r line; do
+      local iface ip
+      iface="${line%% *}"
+      ip="${line##* }"
+      [[ "$ip" == *"/"* ]] && ip="${ip%%/*}"
+      [[ -z "$ip" ]] && continue   # 防御：解析异常的行跳过
+      ips+=("$ip"); names+=("$iface")
+    done < <(ip -4 -o addr show scope global 2>/dev/null | awk '{print $2, $4}')
+  elif command -v hostname >/dev/null 2>&1; then
+    for ip in $(hostname -I 2>/dev/null); do
+      ips+=("$ip"); names+=("(hostname -I)")
+    done
+  fi
+  if [[ ${#ips[@]} -eq 0 ]]; then
+    echo "未检测到本机 IP，请手动输入 Server 地址（Agent 可访问的 IP 或域名）:"
+    read -r PUBLIC_ADDR
+  else
+    echo "检测到本机 IP，请选择（输入序号），或直接输入 IP/域名:"
+    for i in "${!ips[@]}"; do
+      echo "  $((i+1))) ${ips[$i]}  (${names[$i]})"
+    done
+    read -r -p "选择/输入: " choice
+    if [[ "$choice" =~ ^[0-9]+$ ]]; then
+      if (( choice >= 1 && choice <= ${#ips[@]} )); then
+        PUBLIC_ADDR="${ips[$((choice-1))]}"
+        echo "已选择: $PUBLIC_ADDR (${names[$((choice-1))]})"
+      else
+        echo "[错误] 序号无效（范围 1-${#ips[@]}），请重新运行"; exit 1
+      fi
+    elif [[ -n "$choice" ]]; then
+      PUBLIC_ADDR="$choice"
+    else
+      echo "[错误] 输入无效"; exit 1
+    fi
+  fi
+}
+
 # ---- 前置校验 ----
 if [[ $EUID -ne 0 ]]; then
   echo "[错误] 需要 root 权限，请用 sudo 执行"; exit 1
 fi
 if [[ -z "$PUBLIC_ADDR" ]]; then
-  echo "[错误] --public-addr 必填，例如: sudo ./install_server.sh --public-addr 192.168.1.10"; exit 1
+  select_public_addr
 fi
 if [[ "$PUBLIC_ADDR" == http* || "$PUBLIC_ADDR" == *:* ]]; then
   echo "[错误] --public-addr 只填 IP 或域名（不带 http:// 和端口），如 192.168.1.10"; exit 1
@@ -150,12 +194,19 @@ fi
 
 PASSWORD=$(journalctl -u "$SERVICE_NAME" --since "3 min ago" --no-pager 2>/dev/null \
   | grep -oP '密码:\s*\K\S+' | tail -1 || true)
+USERNAME=$(journalctl -u "$SERVICE_NAME" --since "3 min ago" --no-pager 2>/dev/null \
+  | grep -oP '用户名:\s*\K\S+' | tail -1 || true)
 
 echo ""
 echo "══════════════════════════════════════════════════"
 echo "  Baize (白泽) Server 安装完成"
 echo "  Dashboard:  https://$PUBLIC_ADDR:$HTTP_PORT"
 echo "  gRPC:       $PUBLIC_ADDR:$PORT"
+if [[ -n "$USERNAME" ]]; then
+  echo "  用户名:     $USERNAME"
+else
+  echo "  用户名:     admin（未提取到，默认 admin）"
+fi
 if [[ -n "$PASSWORD" ]]; then
   echo "  首次密码:   $PASSWORD"
 else

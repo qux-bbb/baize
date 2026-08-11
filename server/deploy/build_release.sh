@@ -34,35 +34,46 @@ cd "$ROOT"
 GOOS=linux GOARCH=amd64 go build -a -o release/baize-server ./cmd/
 GOOS=windows GOARCH=amd64 go build -a -o release/baize-server.exe ./cmd/
 
-# [2/4] Linux tar.gz
-echo "[2/4] 打包 Linux..."
+# [2/4] 构建 Agent（release）——发布包必须带 Agent（install_server.sh 自动部署为下载页 zip 数据源）
+echo "[2/4] 构建 Agent (release)..."
+(cd "$ROOT/../agent" && cargo build --release) || {
+  echo "[错误] Agent 构建失败（cargo build --release），终止发布"
+  exit 1
+}
+
+# [3/4] Linux tar.gz
+echo "[3/4] 打包 Linux..."
 PKG_LINUX="$RELEASE/pkg-linux/baize-server-$VERSION-linux-amd64"
 mkdir -p "$PKG_LINUX"
 cp "$RELEASE/baize-server" "$PKG_LINUX/"
 cp "$ROOT/deploy/install_server.sh" "$PKG_LINUX/"
 cp "$ROOT/deploy/README.md" "$PKG_LINUX/"
-# 附带 baize-agent.exe：install_server.sh [3/7] 自动拷到 agent-files → Server zip 下载即用（零手动）
+# 附带 baize-agent.exe（release）：install_server.sh [3/7] 自动拷到 agent-files → Server zip 下载即用（零手动）
 # 注意：Windows git-bash 下 `[[ -f "D:/..." ]]` 不认盘符路径，用相对路径判断（[1/4] 已 cd $ROOT）
-AGENT_EXE="../agent/target/debug/baize-agent.exe"
+AGENT_EXE="../agent/target/release/baize-agent.exe"
 if [[ -f "$AGENT_EXE" ]]; then
   cp "$AGENT_EXE" "$PKG_LINUX/"
-  echo "      已附带 baize-agent.exe → 解压后 install_server.sh 自动部署为 zip 下载源"
+  echo "      已附带 baize-agent.exe (release) → 解压后 install_server.sh 自动部署为 zip 下载源"
 else
-  echo "      [警告] 未找到 baize-agent.exe（$AGENT_EXE），发布包不含 Agent（下载页 zip 功能不可用）"
+  echo "[错误] 未找到 baize-agent.exe（$AGENT_EXE），终止发布"
+  exit 1
 fi
 chmod +x "$PKG_LINUX/install_server.sh"
 # --mode=755 必须加：Windows 交叉编译产物在 NTFS 上无 POSIX 执行位，
 # MSYS 的 chmod +x 对无扩展名文件（baize-server）无效，tar --mode 直接设归档权限
 tar czf "$RELEASE/baize-server-$VERSION-linux-amd64.tar.gz" --mode=755 -C "$RELEASE/pkg-linux" .
 
-# [3/4] Windows zip
-echo "[3/4] 打包 Windows..."
+# [4/4] Windows zip
+echo "[4/4] 打包 Windows..."
 PKG_WIN="$RELEASE/pkg-win/baize-server-$VERSION-windows-amd64"
 mkdir -p "$PKG_WIN"
 cp "$RELEASE/baize-server.exe" "$PKG_WIN/"
 cp "$ROOT/deploy/README.md" "$PKG_WIN/"
 if [[ -f "$AGENT_EXE" ]]; then
   cp "$AGENT_EXE" "$PKG_WIN/"
+else
+  echo "[错误] 未找到 baize-agent.exe（$AGENT_EXE），终止发布"
+  exit 1
 fi
 # python3/python 任一可用（zip 打包用标准库，避免依赖 zip 命令）。
 # 注意：Windows 上 command -v python3 可能命中 WindowsApps 的 stub（执行即失败），
@@ -83,29 +94,39 @@ fi
        "baize-server-$VERSION-windows-amd64") \
   || { echo "[错误] python zipfile 打包失败"; exit 1; }
 
-# [3.5/4] Agent 通用包（windows-amd64）——不含 Server 实例配置（ca/地址），
+# [5/4] Agent 通用包（windows-amd64）——不含 Server 实例配置（ca/地址），
 #          GitHub Release 用；实例化包（带地址+ca）从 Server Dashboard 下载
-echo "[3.5/4] 打包 Agent 通用包..."
+echo "[5/4] 打包 Agent 通用包..."
 PKG_AGENT="$RELEASE/pkg-agent/baize-agent-$VERSION-windows-amd64"
 mkdir -p "$PKG_AGENT"
 if [[ -f "$AGENT_EXE" ]]; then
   cp "$AGENT_EXE" "$PKG_AGENT/"
   cp "$ROOT/../agent/install.bat" "$PKG_AGENT/"
+  cp "$ROOT/../agent/uninstall.bat" "$PKG_AGENT/"
   printf '{"server": "", "ca": "", "watch_dirs": []}\n' > "$PKG_AGENT/agent.conf"
   cat > "$PKG_AGENT/README.txt" <<'EOF'
 Baize Agent (Windows amd64) - v0.1.0
 
-Install:
-  1. Edit agent.conf: set "server" to your Baize Server gRPC address
-     (e.g. "https://192.168.1.10:50051"), and copy the Server's ca.crt
-     next to baize-agent.exe if TLS is enabled.
-  2. Double-click install.bat (auto-elevates, click "Yes" on UAC).
-  3. Service "baize-agent" starts and connects automatically.
+Install (recommended):
+  Open the Server Dashboard → "下载 Agent" page, create an enrollment
+  token, and copy the one-liner install command. Run it on the target
+  machine (as administrator) - it downloads the zip and installs
+  automatically.
 
-Tip: If the Server is already deployed, download the ready-to-use zip
-from the Server Dashboard (address and CA are pre-configured).
+Manual install:
+  1. Get an enrollment token from the Server Dashboard
+     ("下载 Agent" → 生成 token, copy it).
+  2. Run:  install.bat <SERVER_ADDR> <TOKEN>
+     e.g.  install.bat https://192.168.1.10:50051 baize-xxxx
+  3. The agent registers automatically (writes client.key), installs the
+     service and connects.
 
-Uninstall: baize-agent.exe --uninstall
+TLS note: if the Server uses https, copy the Server's ca.crt next to
+baize-agent.exe (the zip downloaded from the Dashboard already includes it).
+
+Uninstall: run uninstall.bat in the extracted folder (stops & removes the
+service, restores audit policies, optionally deletes files), or:
+          baize-agent.exe --uninstall
 EOF
   (cd "$RELEASE/pkg-agent" \
     && "$PYTHON_CMD" -m zipfile -c "../baize-agent-$VERSION-windows-amd64.zip" \
@@ -113,11 +134,12 @@ EOF
     || { echo "[错误] Agent zip 打包失败"; exit 1; }
   echo "      已生成 baize-agent-$VERSION-windows-amd64.zip"
 else
-  echo "      [警告] 未找到 baize-agent.exe，跳过 Agent 通用包"
+  echo "[错误] 未找到 baize-agent.exe（$AGENT_EXE），终止发布"
+  exit 1
 fi
 
-# [4/4] 校验 + SHA256
-echo "[4/4] 校验与校验和..."
+# [6/4] 校验 + SHA256
+echo "[6/4] 校验与校验和..."
 tar tzf "$RELEASE/baize-server-$VERSION-linux-amd64.tar.gz" \
   | grep -q "baize-server-$VERSION-linux-amd64/install_server.sh" \
   || { echo "[错误] tar.gz 缺 install_server.sh"; exit 1; }

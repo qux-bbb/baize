@@ -7,15 +7,18 @@
 ```
 ┌──────────────┐   TLS (gRPC 50051)   ┌──────────────┐
 │  Server 机器  │ ◄─────────────────── │  Agent 机器   │
-│  gRPC 50051   │   单向 TLS + token    │  Windows 10+  │
-│  HTTPS 8080   │ ───────────────────► │  MSI 安装     │
+│  gRPC 50051   │  单向TLS + 身份密钥    │  Windows 10+  │
+│  HTTPS 8080   │ ───────────────────► │  MSI/zip 安装  │
 └──────────────┘   HTTPS (Dashboard)   └──────────────┘
+  注册：Agent 凭 enrollment token（下载页生成，可吊销）注册换取
+  身份密钥 client.key；token 吊销 = 禁止新注册，Agent 吊销 = 踢下线
 ```
 
 - 两机同一局域网、可互通
 - Server 机器：Windows 10+ 或 Linux（Ubuntu 22.04+ 等）
 - Agent 机器：Windows 10+ x64
 - 准备：编译好的 `baize-server`（本指南第 1 步）、Agent 的 `baize-agent.exe` 与 `baize-agent.msi`（MSI 在 Agent 构建机上产出，构建方法见第 3 步）
+- 注册 token：从 Server Dashboard 下载页生成（可重复使用；泄露可吊销，已注册 Agent 不受影响）
 
 ---
 
@@ -92,7 +95,7 @@ journalctl -u baize-server -n 30     # 首次密码在日志中
 
 ## 三、构建 Agent 安装包（约 5 分钟，Agent 构建机）
 
-MSI 需要内置 Server 的 CA 证书（每台 Server 的 CA 不同，MSI 按 Server 实例构建一次，可分发到多台 Agent）：
+MSI 需要内置 Server 的 CA 证书（每台 Server 的 CA 不同，MSI 按 Server 实例构建一次，可分发到多台 Agent；CA 是公钥，随包公开无害）：
 
 ```cmd
 :: 1. 从 Server 的 data 目录拷贝 CA 证书到 wix 目录
@@ -105,36 +108,94 @@ build_msi.bat ..\target\debug\baize-agent.exe
 
 **✅ 验证**：构建输出含 `找到 ca.crt`；MSI 拷到 Server 机器（供 `--agent-installer` 与 Dashboard 下载用）。
 
-> 不构建 MSI 也可以：Server 的 Dashboard（https://ServerIP:8080 → 下载页）可直接下载 zip 包（自动含 ca.crt + 正确的 https 地址），解压后管理员运行 `install.bat` 即可，zip 方式适合单台快速安装。
+> **注册 token 不要构建进 MSI**（会随包泄露）：token 一律安装时传 `BAIZE_ENROLLMENT_TOKEN`，从 Dashboard 下载页获取。
+>
+> 不构建 MSI 也可以：Server 的 Dashboard（https://ServerIP:8080 → 下载页）可直接下载 zip 包（通用包，含 ca.crt；不含 Server 地址与身份），复制一条安装命令到目标机执行即可，zip 方式适合单台快速安装。
 
 ---
 
 ## 四、Agent 机器安装（约 5 分钟）
 
-拷贝 MSI 到 Agent 机器，管理员 cmd：
+**方式 A：一条命令（推荐，目标机管理员 PowerShell）**——先从 Dashboard 下载页生成/复制注册 token：
+
+```powershell
+curl.exe -k -o baize.zip "https://192.168.1.10:8080/api/agent/package"
+Expand-Archive baize.zip -Force
+.\baize\install.bat https://192.168.1.10:50051 <注册token>
+```
+
+**方式 B：MSI 静默安装**（包已拷贝到目标机，管理员 cmd）：
 
 ```cmd
-msiexec /i baize-agent.msi /q SERVER_ADDR="https://192.168.1.10:50051"
+msiexec /i baize-agent.msi /q SERVER_ADDR="https://192.168.1.10:50051" BAIZE_ENROLLMENT_TOKEN="<注册token>"
 ```
 
 > `192.168.1.10` 必须与 Server 的 `--public-addr` **完全一致**（同 IP、https 前缀）——不一致会导致 TLS 证书验证失败。
+> Agent 首次启动自动注册（写入 client.key）；缺 token 或 token 被吊销则注册失败，Agent 会持续重试并在日志提示。
 
 **✅ 验证**：
 
 ```cmd
 sc query baize-agent        :: 应为 RUNNING
 type "C:\Program Files\Baize\agent.conf"   :: server=https://192.168.1.10:50051, ca=ca.crt
-powershell -Command "Get-Content C:\ProgramData\Baize\agent.log -Tail 15 | Select-String 'TLS|已连接'"
-:: 应见：已启用 TLS，CA: ... + 已连接到 Server: https://192.168.1.10:50051
+type "C:\Program Files\Baize\client.key"   :: 已注册（身份密钥，勿泄露）
+powershell -Command "Get-Content C:\ProgramData\Baize\agent.log -Tail 15 | Select-String 'TLS|已连接|注册'"
+:: 应见：已启用 TLS, CA: ... + Agent 注册成功 + 已连接到 Server: https://192.168.1.10:50051
 ```
+
+**Agent 卸载**（解压目录或安装目录里的 `uninstall.bat`，管理员运行）：
+
+```
+uninstall.bat
+:: 停止并删除服务 → 恢复审计策略 → 可选删除 C:\Program Files\Baize 与 C:\ProgramData\Baize
+```
+
+---
+
+## 四·补、本机快速验证（前台模式，不装服务，约 3 分钟）
+
+不想装 Windows 服务时，用前台模式验证注册链路（Agent 直接跑在终端里）：
+
+**1. 准备 Agent 目录**（git-bash）：
+
+```bash
+mkdir -p /d/baize/agent-v && cd /d/baize/agent-v
+cp /d/baize/agent/target/debug/baize-agent.exe .
+cp /d/baize/server/data/ca.crt ca.crt         # 换成你的 data 目录路径
+printf '{\n  "server": "https://127.0.0.1:50051",\n  "ca": "ca.crt",\n  "watch_dirs": []\n}' > agent.conf
+printf '<注册token>' > authd.pass              # token 从 Server 日志或 Dashboard 下载页获取
+```
+
+**2. 前台运行**：
+
+```bash
+./baize-agent.exe
+```
+
+**3. 预期日志**（按顺序）：
+
+```
+无 client.key，正在向 Server 注册... → Agent 注册成功 → client.key 已保存
+→ 已连接到 Server → 双向流已建立 → 收到 Server 指令（filewatch-init / et-...）
+```
+
+**4. 验证**：
+
+```bash
+ls agent-v/client.key            # 身份密钥已生成（之后启动直接复用，不再注册）
+cat server/data/agents.json      # 注册记录（agent_id / hostname / token_id）
+```
+
+> 前台模式以普通用户权限运行，写 `C:\ProgramData\Baize\agent.log` 会报"打开日志文件失败"——这是权限问题（服务模式以 SYSTEM 运行无此问题），日志会 fallback 到终端输出，不影响功能。
 
 ---
 
 ## 五、验证闭环（约 2 分钟）
 
-1. Agent 机器开一个 notepad
-2. Server 机器浏览器访问 `https://192.168.1.10:8080`（自签证书警告 → 高级 → 继续访问）→ 用首次密码登录 → 修改密码
-3. 主机页应看到 Agent 在线，事件页出现 notepad 的进程创建事件
+1. Server 机器浏览器访问 `https://192.168.1.10:8080`（自签证书警告 → 高级 → 继续访问）→ 用首次密码登录 → 修改密码
+2. 下载页生成注册 token（可命名，如"测试机"）→ 复制安装命令到 Agent 机器执行
+3. Agent 机器开一个 notepad
+4. 主机页应看到 Agent 在线，事件页出现 notepad 的进程创建事件
 
 ---
 
@@ -145,6 +206,9 @@ powershell -Command "Get-Content C:\ProgramData\Baize\agent.log -Tail 15 | Selec
 | Agent 日志 `已连接到 Server` 但随后连接被取消/关闭 | TLS 握手失败：地址与 `--public-addr` 不一致，或 ca.crt 未配置 | 核对地址完全一致；`agent.conf` 的 `ca` 应为 `ca.crt` |
 | `agent.conf` 的 `ca` 为空 | MSI 构建时 `wix\ca.crt` 不存在（构建输出为"未找到 ca.crt"） | 重新拷贝 ca.crt 并重建 MSI 后重装 |
 | Agent 连不上 Server | 防火墙未放行 50051 | Server 机器放行入站 50051/8080 |
+| Agent 日志反复"未找到注册 token" | 安装时没传 token（authd.pass 缺失） | 重新执行 `install.bat <地址> <token>` 或手动写 `C:\\Program Files\\Baize\\authd.pass` 后重启服务 |
+| Agent 日志"注册 token 无效或已吊销" | token 被吊销/输错 | 下载页重新生成 token，重新安装 |
+| Agent 日志"未注册的 Agent"（连接被拒） | client.key 失效或未注册 | 删除 `C:\\Program Files\\Baize\\client.key` 后重启服务（会自动用 token 重新注册）；若仍失败检查 token |
 | 服务安装失败 1603 | 旧版本冲突 / 服务被占用 | 看 `msiexec /l*v` 日志；先 `net stop baize-agent` 再重装 |
 | 事件页没有数据 | 事件类型开关默认只开 process；无操作产生事件 | 先开 notepad 等程序验证 process；其他事件类型在设置页按需开启 |
 | 证书过期 | 自签 CA 与 Server 证书有效期 10 年 | 删除 `data\ca.crt/ca.key/server.crt/server.key` 重启 Server 重新生成，**Agent 需重装**（ca 变更） |
