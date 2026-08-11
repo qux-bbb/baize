@@ -108,7 +108,7 @@ reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Baize Agent" /
 reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Baize Agent" /v DisplayVersion /t REG_SZ /d "0.1.0" /f >nul 2>&1
 reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Baize Agent" /v Publisher /t REG_SZ /d "Baize" /f >nul 2>&1
 reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Baize Agent" /v InstallLocation /t REG_SZ /d "%INSTALL_DIR%" /f >nul 2>&1
-reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Baize Agent" /v UninstallString /t REG_SZ /d "\"%INSTALL_DIR%\uninstall.bat\" /S" /f >nul 2>&1
+reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Baize Agent" /v UninstallString /t REG_SZ /d "\"%INSTALL_DIR%\uninstall.bat\"" /f >nul 2>&1
 reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Baize Agent" /v DisplayIcon /t REG_SZ /d "%INSTALL_DIR%\baize-agent.exe,0" /f >nul 2>&1
 if %errorlevel% equ 0 (
     echo [OK] 已注册控制面板卸载入口（设置→应用→Baize Agent）

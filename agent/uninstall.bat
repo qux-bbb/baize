@@ -48,8 +48,22 @@ if %SILENT% equ 0 (
 REM ── 2. 停止并删除服务 ──
 echo.
 echo [1/4] 停止服务...
+sc query baize-agent >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [提示] baize-agent 服务不存在，跳过停止
+    goto NO_SERVICE
+)
 net stop baize-agent >nul 2>&1
+REM 轮询等待服务真正停止（最多 30 秒），确认停止后再删除
+set /a WAIT=0
+:WAIT_STOP
+sc query baize-agent 2>nul | findstr /i "STOPPED" >nul 2>&1
+if !errorlevel! equ 0 goto STOPPED
 timeout /t 2 /nobreak >nul
+set /a WAIT+=1
+if !WAIT! lss 15 goto WAIT_STOP
+echo [警告] 服务 30 秒内未停止，继续尝试删除（可能失败）
+:STOPPED
 echo [2/4] 删除服务...
 sc delete baize-agent >nul 2>&1
 if %errorlevel% equ 0 (
@@ -57,12 +71,20 @@ if %errorlevel% equ 0 (
 ) else (
     echo [警告] 服务可能不存在或删除失败（可手动执行 sc delete baize-agent）
 )
+:NO_SERVICE
 
+REM 服务仍存在（删除失败）则跳过审计恢复，避免与运行中 Agent 的审计 refcount 冲突
+sc query baize-agent >nul 2>&1
+if %errorlevel% equ 0 (
+    echo [警告] baize-agent 服务仍存在，跳过审计策略恢复（请先手动停止并删除服务）
+    goto SKIP_AUDIT
+)
 REM ── 3. 恢复审计策略（与安装对称：关掉 Agent 启用的审计子类）──
 echo [3/4] 恢复审计策略...
 auditpol /set /subcategory:{0CCE922B-69AE-11D9-BED3-505054503030} /success:disable >nul 2>&1
 auditpol /set /subcategory:{0CCE9226-69AE-11D9-BED3-505054503030} /success:disable >nul 2>&1
 echo [OK] 审计策略已恢复（4688 进程创建 / 5156 网络连接）
+:SKIP_AUDIT
 
 REM ── 3.5 移除控制面板卸载入口 ──
 reg delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Baize Agent" /f >nul 2>&1
@@ -75,7 +97,10 @@ if %errorlevel% equ 0 (
 REM ── 4. 清理文件（可选）──
 REM 安装目录：优先标准路径（%ProgramFiles%\Baize，兼容从解压目录运行），否则用脚本所在目录
 set "INSTALL_DIR=%ProgramFiles%\Baize"
-if not exist "%INSTALL_DIR%\baize-agent.exe" set "INSTALL_DIR=%~dp0"
+REM 回退保护：仅当脚本所在目录确实含 baize-agent.exe 时才回退，避免误删任意目录
+if not exist "%INSTALL_DIR%\baize-agent.exe" (
+    if exist "%~dp0baize-agent.exe" set "INSTALL_DIR=%~dp0"
+)
 cd /d "C:\"
 echo.
 if %SILENT% equ 0 (
