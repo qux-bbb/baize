@@ -13,7 +13,16 @@ REM ── 1. 自动请求管理员权限（非管理员时 UAC 提升自身重跑）──
 net session >nul 2>&1
 if %errorlevel% neq 0 (
     echo 需要管理员权限，正在请求提升...
-    powershell -Command "Start-Process -FilePath '%~f0' -ArgumentList '%~1','%~2' -Verb RunAs" >nul 2>&1
+    REM 注意: PS 5.1 的 Start-Process -ArgumentList 不接受空字符串(双击无参数时 '' 会直接报错)
+    if not "%~2"=="" (
+        powershell -Command "Start-Process -FilePath '%~f0' -ArgumentList '%~1','%~2' -Verb RunAs" >nul 2>&1
+    ) else (
+        if not "%~1"=="" (
+            powershell -Command "Start-Process -FilePath '%~f0' -ArgumentList '%~1' -Verb RunAs" >nul 2>&1
+        ) else (
+            powershell -Command "Start-Process -FilePath '%~f0' -Verb RunAs" >nul 2>&1
+        )
+    )
     if !errorlevel! neq 0 (
         echo [错误] 未能获取管理员权限，请右键选择"以管理员身份运行"
         pause
@@ -35,7 +44,8 @@ REM ── 3. 检查服务是否已安装 ──
 sc query baize-agent >nul 2>&1
 if %errorlevel% equ 0 (
     echo [错误] baize-agent 服务已存在。
-    echo        如需重新安装，请先执行: sc delete baize-agent
+    echo        如需重新安装，请先卸载: 设置→应用→Baize Agent，
+    echo        或运行 C:\Program Files\Baize\uninstall.bat
     pause
     exit /b 1
 )
@@ -54,6 +64,15 @@ REM -- CA 证书（TLS 必须，缺失时连接失败）--
 if exist "ca.crt" copy /Y "ca.crt" "%INSTALL_DIR%\" >nul
 if not exist "%INSTALL_DIR%\ca.crt" (
     echo [警告] 未找到 ca.crt，TLS 连接将失败（请从 Server 下载页重新获取完整包）
+)
+REM -- 卸载脚本（控制面板卸载入口需要它随程序安装）--
+if exist "uninstall.bat" (
+    copy /Y "uninstall.bat" "%INSTALL_DIR%\" >nul
+    if %errorlevel% neq 0 (
+        echo [警告] 拷贝 uninstall.bat 失败，将无法从控制面板卸载
+    )
+) else (
+    echo [警告] 未找到 uninstall.bat，将无法从控制面板卸载（可手动 sc delete baize-agent）
 )
 echo [OK] 文件已安装到 %INSTALL_DIR%
 
@@ -82,6 +101,19 @@ if not "%~2"=="" (
 ) else (
     echo [警告] 未指定注册 token，Agent 首次启动将无法注册
     echo        可从 Dashboard 下载页获取 token 后重装
+)
+
+REM ── 4.6 注册控制面板卸载入口（设置→应用→Baize Agent）──
+reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Baize Agent" /v DisplayName /t REG_SZ /d "Baize Agent" /f >nul 2>&1
+reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Baize Agent" /v DisplayVersion /t REG_SZ /d "0.1.0" /f >nul 2>&1
+reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Baize Agent" /v Publisher /t REG_SZ /d "Baize" /f >nul 2>&1
+reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Baize Agent" /v InstallLocation /t REG_SZ /d "%INSTALL_DIR%" /f >nul 2>&1
+reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Baize Agent" /v UninstallString /t REG_SZ /d "\"%INSTALL_DIR%\uninstall.bat\" /S" /f >nul 2>&1
+reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Baize Agent" /v DisplayIcon /t REG_SZ /d "%INSTALL_DIR%\baize-agent.exe,0" /f >nul 2>&1
+if %errorlevel% equ 0 (
+    echo [OK] 已注册控制面板卸载入口（设置→应用→Baize Agent）
+) else (
+    echo [警告] 注册卸载入口失败，可手动运行 %INSTALL_DIR%\uninstall.bat
 )
 
 
@@ -117,6 +149,6 @@ echo   - 服务名称 : baize-agent
 echo   - 安装目录 : %INSTALL_DIR%
 echo   - 配置文件 : %INSTALL_DIR%\agent.conf
 echo   - 日志文件 : %ProgramData%\Baize\agent.log
-echo   - 卸载命令 : sc stop baize-agent ^&^& sc delete baize-agent
+echo   - 卸载 : 设置→应用→Baize Agent，或 %INSTALL_DIR%\uninstall.bat
 echo ═══════════════════════════════════════════════
 pause

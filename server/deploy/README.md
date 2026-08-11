@@ -143,11 +143,12 @@ powershell -Command "Get-Content C:\ProgramData\Baize\agent.log -Tail 15 | Selec
 :: 应见：已启用 TLS, CA: ... + Agent 注册成功 + 已连接到 Server: https://192.168.1.10:50051
 ```
 
-**Agent 卸载**（解压目录或安装目录里的 `uninstall.bat`，管理员运行）：
+**Agent 卸载**（设置→应用→Baize Agent，或运行 `C:\Program Files\Baize\uninstall.bat`；管理员）：
 
 ```
-uninstall.bat
-:: 停止并删除服务 → 恢复审计策略 → 可选删除 C:\Program Files\Baize 与 C:\ProgramData\Baize
+uninstall.bat [/S]
+:: 停止并删除服务 → 恢复审计策略 → 移除控制面板卸载入口 → 可选删除 C:\Program Files\Baize 与 C:\ProgramData\Baize
+:: /S 静默模式（控制面板卸载自动携带，跳过交互确认）
 ```
 
 ---

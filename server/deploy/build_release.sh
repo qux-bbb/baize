@@ -124,9 +124,8 @@ Manual install:
 TLS note: if the Server uses https, copy the Server's ca.crt next to
 baize-agent.exe (the zip downloaded from the Dashboard already includes it).
 
-Uninstall: run uninstall.bat in the extracted folder (stops & removes the
-service, restores audit policies, optionally deletes files), or:
-          baize-agent.exe --uninstall
+Uninstall: run uninstall.bat (installed in C:\Program Files\Baize, or from
+the extracted folder), or: Settings → Apps → Baize Agent → Uninstall.
 EOF
   (cd "$RELEASE/pkg-agent" \
     && "$PYTHON_CMD" -m zipfile -c "../baize-agent-$VERSION-windows-amd64.zip" \
