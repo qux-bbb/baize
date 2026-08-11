@@ -63,8 +63,10 @@ echo 构建完成: %~dp0baize-agent.msi
 echo.
 echo 内置地址模式（构建时传了 SERVER_ADDR，双击/静默直接连）:
 echo   baize-agent.msi 双击安装即可
-echo 批量模式（传 SERVER_ADDR 覆盖内置地址）:
-echo   msiexec /i "%~dp0baize-agent.msi" /q SERVER_ADDR="https://10.0.0.1:50051"
+echo 批量模式（传 SERVER_ADDR 覆盖内置地址; token 必须安装时传）:
+echo   msiexec /i "%~dp0baize-agent.msi" /q SERVER_ADDR="https://10.0.0.1:50051" BAIZE_ENROLLMENT_TOKEN="baize-xxxx"
+echo.
+echo 注册 token 从 Dashboard 下载页获取（可重复使用; MSI 构建时勿内置 token, 会随包泄露）:
 echo.
 echo TLS 说明: ca.crt 由 Server 首次启动生成（server\data\ca.crt），
 echo          构建 MSI 前请拷贝到本目录（agent\wix\ca.crt）

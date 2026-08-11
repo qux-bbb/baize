@@ -908,6 +908,7 @@ type HostResult struct {
 	AgentVersion string   `json:"agent_version"`
 	Arch         string   `json:"arch"`
 	Ips          []string `json:"ips,omitempty"`
+	Revoked      bool     `json:"revoked,omitempty"` // 注册表吊销标记（hosts API 合并）
 }
 
 type AlertResult struct {

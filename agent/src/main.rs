@@ -25,6 +25,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use std::fs;
 use std::io::Write;
+use std::str::FromStr;
 use sysinfo::System;
 use tokio::sync::mpsc;
 use tokio::time;
@@ -51,6 +52,9 @@ struct Cli {
     /// 将 Server 地址写入 exe 同目录 agent.conf 后退出（供 MSI 安装器调用）
     #[arg(long)]
     write_config: Option<String>,
+    /// 将注册 token 写入 exe 同目录 authd.pass 后退出（供 MSI 安装器调用；空串=删除）
+    #[arg(long)]
+    write_token: Option<String>,
     #[arg(long)]
     hostname: Option<String>,
     /// 安装为 Windows 服务
@@ -130,6 +134,10 @@ async fn main() -> Result<()> {
     if let Some(addr) = cli.write_config {
         return write_config_file(&addr);
     }
+    // 注册 token 写入子命令（MSI 安装器调用）：写 authd.pass 后退出
+    if let Some(token) = cli.write_token {
+        return write_token_file(&token);
+    }
 
     // 服务管理命令（Windows only）
     #[cfg(windows)]
@@ -208,6 +216,43 @@ fn write_config_file(server: &str) -> Result<()> {
     std::fs::write(&path, serde_json::to_string_pretty(&conf)?)?;
     println!("agent.conf 已写入: {}", path.display());
     Ok(())
+}
+
+/// 将注册 token 写入 exe 同目录 authd.pass（MSI 安装器 custom action 调用）。
+/// token 为空串时删除文件（卸载清理 / 重装前清旧 token）。
+fn write_token_file(token: &str) -> Result<()> {
+    let exe = std::env::current_exe().context("无法获取可执行文件路径")?;
+    let dir = exe.parent().ok_or_else(|| anyhow::anyhow!("无法获取安装目录"))?;
+    let path = dir.join("authd.pass");
+
+    if token.trim().is_empty() {
+        if path.exists() {
+            std::fs::remove_file(&path)?;
+            println!("authd.pass 已删除: {}", path.display());
+        }
+        return Ok(());
+    }
+    std::fs::write(&path, token.trim())?;
+    println!("authd.pass 已写入: {}", path.display());
+    Ok(())
+}
+
+// ── Agent 身份文件（client.key / authd.pass）──────────────
+
+/// 通信身份密钥文件路径（exe 同目录，对标 Wazuh client.keys）
+fn client_key_path() -> std::path::PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|d| d.join("client.key")))
+        .unwrap_or_else(|| std::path::PathBuf::from("client.key"))
+}
+
+/// 注册 token 文件路径（exe 同目录，对标 Wazuh authd.pass）
+fn authd_pass_path() -> std::path::PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|d| d.join("authd.pass")))
+        .unwrap_or_else(|| std::path::PathBuf::from("authd.pass"))
 }
 
 /// Agent 主循环：读取配置 → 构造主机信息 → 连接 Server → 断线重连。
@@ -293,6 +338,14 @@ pub async fn run_agent_loop(
 
     // 断线重连循环
     let watch_str = watch.join(",");
+
+    // 注册状态机：有 client.key 直接用；无 → 读 authd.pass token → Register RPC 换取身份密钥
+    let mut agent_key = ensure_client_key(&server, &agent_info, &cfg.ca).await?;
+    info!("Agent 身份密钥就绪 (client.key)");
+
+    // 身份失效标志：心跳/连接被拒（Unauthenticated）时置位，触发删 key 重新注册
+    let auth_failed = Arc::new(AtomicBool::new(false));
+
     // 快照只在首次成功连接时发送一次（发完即置 false，重连不再发）
     let mut need_snapshot = need_snapshot;
     loop {
@@ -300,7 +353,7 @@ pub async fn run_agent_loop(
             info!("收到停止请求，Agent 退出");
             break;
         }
-        match run(&server, agent_info.clone(), &sys, interval_secs, &watch_str, cfg.ca.clone(), &mut need_snapshot).await {
+        match run(&server, agent_info.clone(), &sys, interval_secs, &watch_str, cfg.ca.clone(), &agent_key, &auth_failed, &mut need_snapshot).await {
             Ok(()) => {
                 info!("连接正常结束，5 秒后重连...");
                 if sleep_interruptible(Duration::from_secs(5)).await {
@@ -309,6 +362,18 @@ pub async fn run_agent_loop(
                 }
             }
             Err(e) => {
+                // 身份失效（被吊销/key 被换）：删除本地 client.key，凭 token 重新注册
+                if auth_failed.load(Ordering::Relaxed) {
+                    auth_failed.store(false, Ordering::Relaxed);
+                    let _ = std::fs::remove_file(client_key_path());
+                    match ensure_client_key(&server, &agent_info, &cfg.ca).await {
+                        Ok(k) => {
+                            agent_key = k;
+                            info!("已凭 enrollment token 重新注册");
+                        }
+                        Err(re) => error!("重新注册失败（token 可能已吊销）: {:?}", re),
+                    }
+                }
                 error!("连接错误: {:?}，15 秒后重试...", e);
                 if sleep_interruptible(Duration::from_secs(15)).await {
                     info!("停止请求打断重试等待");
@@ -369,16 +434,8 @@ fn resolve_ca_path(p: &str) -> std::path::PathBuf {
     pb
 }
 
-async fn run(
-    server: &str,
-    agent_info: AgentInfo,
-    system: &Arc<tokio::sync::Mutex<System>>,
-    interval_secs: u64,
-    watch: &str,
-    ca: Option<String>,
-    need_snapshot: &mut bool,
-) -> Result<()> {
-    // TLS：server 为 https:// 时启用（ca 指向 CA 证书，相对路径按 exe 同目录解析）
+// 建立 gRPC Channel（https:// 时启用 TLS，用 agent.conf 的 ca 证书验证 Server）
+async fn make_channel(server: &str, ca: &Option<String>) -> Result<tonic::transport::Channel> {
     let mut endpoint = Endpoint::from_shared(server.to_string()).context("无效的 Server 地址")?;
     if server.starts_with("https://") {
         let ca_val = ca.as_deref().filter(|s| !s.is_empty()).ok_or_else(|| {
@@ -391,7 +448,77 @@ async fn run(
         endpoint = endpoint.tls_config(tls).context("TLS 配置失败")?;
         info!("已启用 TLS，CA: {}", ca_path.display());
     }
-    let channel = endpoint.connect().await.context("连接 Server 失败")?;
+    endpoint.connect().await.context("连接 Server 失败")
+}
+
+/// 注册状态机：确保 Agent 持有通信身份密钥（client.key）。
+/// 已有 → 直接复用；无 → 读 authd.pass 的 enrollment token → Register RPC → 存 client.key。
+async fn ensure_client_key(
+    server: &str,
+    agent_info: &pb::AgentInfo,
+    ca: &Option<String>,
+) -> Result<String> {
+    let key_path = client_key_path();
+    if let Ok(k) = std::fs::read_to_string(&key_path) {
+        let k = k.trim().to_string();
+        if !k.is_empty() {
+            info!("已加载 client.key: {}", key_path.display());
+            return Ok(k);
+        }
+    }
+
+    // 无 client.key → 注册流程
+    let pass_path = authd_pass_path();
+    let token = std::fs::read_to_string(&pass_path)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "未找到注册 token（{}）。请使用 install.bat <Server地址> <注册token> 重新安装",
+                pass_path.display()
+            )
+        })?;
+
+    info!("无 client.key，正在向 Server 注册...");
+    let channel = make_channel(server, ca).await?;
+    let mut client = BaizeServiceClient::new(channel);
+    let resp = client
+        .register(pb::RegisterRequest {
+            agent_id: agent_info.agent_id.clone(),
+            hostname: agent_info.hostname.clone(),
+            token,
+        })
+        .await
+        .context("注册失败（请检查 enrollment token 是否有效、Server 地址是否正确）")?;
+    let key = resp.into_inner().agent_key;
+    if key.is_empty() {
+        anyhow::bail!("注册响应缺少 agent_key");
+    }
+
+    if let Some(parent) = key_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match std::fs::write(&key_path, &key) {
+        Ok(_) => info!("client.key 已保存: {}", key_path.display()),
+        Err(e) => error!("client.key 保存失败（仅本次运行有效）: {:?}", e),
+    }
+    info!("Agent 注册成功");
+    Ok(key)
+}
+
+async fn run(
+    server: &str,
+    agent_info: AgentInfo,
+    system: &Arc<tokio::sync::Mutex<System>>,
+    interval_secs: u64,
+    watch: &str,
+    ca: Option<String>,
+    agent_key: &str,
+    auth_failed: &Arc<AtomicBool>,
+    need_snapshot: &mut bool,
+) -> Result<()> {
+    let channel = make_channel(server, &ca).await?;
     let mut client = BaizeServiceClient::new(channel);
     info!("已连接到 Server: {}", server);
 
@@ -455,24 +582,49 @@ async fn run(
         *need_snapshot = false;
     }
 
-    let response = client
-        .agent_stream(Request::new(streaming_request))
-        .await
-        .context("AgentStream RPC 失败")?;
+    let response = {
+        let mut req = Request::new(streaming_request);
+        req.metadata_mut().insert(
+            "baize-agent-key",
+            tonic::metadata::MetadataValue::from_str(agent_key)
+                .map_err(|e| anyhow::anyhow!("非法 agent_key: {}", e))?,
+        );
+        match client.agent_stream(req).await {
+            Ok(r) => r,
+            Err(e) if e.code() == tonic::Code::Unauthenticated => {
+                error!("连接被拒：身份校验失败（Agent 可能已被吊销）");
+                auth_failed.store(true, Ordering::Relaxed);
+                return Err(anyhow::anyhow!("身份校验失败"));
+            }
+            Err(e) => return Err(e.into()),
+        }
+    };
 
     info!("双向流已建立，等待 Server 指令...");
 
     let mut incoming = response.into_inner();
 
-    // 心跳循环：每 30 秒上报 AgentInfo（注册 / 保活，独立于事件流）
+    // 心跳循环：每 30 秒上报 AgentInfo（注册 / 保活，独立于事件流）。
+    // 身份校验失败（如被 Server 吊销）→ 置 auth_failed 标志，主循环据此断开连接
     {
         let mut hb_client = client.clone();
         let hb_info = agent_info.clone();
+        let hb_key = agent_key.to_string();
+        let hb_failed = auth_failed.clone();
         tokio::spawn(async move {
             loop {
                 time::sleep(Duration::from_secs(30)).await;
-                match hb_client.heartbeat(Request::new(hb_info.clone())).await {
+                let mut req = Request::new(hb_info.clone());
+                if let Ok(v) = tonic::metadata::MetadataValue::from_str(&hb_key) {
+                    req.metadata_mut().insert("baize-agent-key", v);
+                }
+                match hb_client.heartbeat(req).await {
                     Ok(_) => {}
+                    Err(e) if e.code() == tonic::Code::Unauthenticated => {
+                        error!("身份校验失败（Agent 可能已被吊销），断开连接");
+                        hb_failed.store(true, Ordering::Relaxed);
+                        break;
+                    }
                     Err(e) => error!("心跳上报失败: {:?}", e),
                 }
             }
@@ -573,6 +725,10 @@ async fn run(
                 }
             }
             _ = time::sleep(Duration::from_secs(1)) => {
+                if auth_failed.load(Ordering::Relaxed) {
+                    info!("身份已失效（Agent 被吊销），关闭连接");
+                    break;
+                }
                 if stop_requested() {
                     info!("收到停止请求，关闭连接");
                     break;

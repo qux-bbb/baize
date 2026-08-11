@@ -10,7 +10,7 @@ import './config.css'
 interface Host {
   agent_id: string; hostname: string; os_type: string; os_version: string;
   arch: string; agent_version: string; event_count: number; last_seen: string;
-  ips?: string[]; is_online: boolean;
+  ips?: string[]; is_online: boolean; revoked?: boolean;
 }
 
 interface Alert {
@@ -350,8 +350,14 @@ export default function App() {
             {showAgentDownload && <AgentDownload />}
             <div className="grid">
             {hosts.map(h => (
-              <div key={h.agent_id} className="card" onClick={() => navigate('hosts/' + h.agent_id)}>
-                <div className="card-header"><span className={`dot ${h.is_online ? 'green' : 'gray'}`} /><strong>{h.hostname}</strong><span className={`badge ${h.is_online ? 'online' : 'offline'}`}>{h.is_online ? '在线' : '离线'}</span></div>
+              <div key={h.agent_id} className="card" onClick={() => navigate('hosts/' + h.agent_id)} style={h.revoked ? { opacity: 0.55 } : undefined}>
+                <div className="card-header">
+                  <span className={`dot ${h.revoked ? 'gray' : (h.is_online ? 'green' : 'gray')}`} />
+                  <strong>{h.hostname}</strong>
+                  {h.revoked
+                    ? <span className="badge offline">已吊销</span>
+                    : <span className={`badge ${h.is_online ? 'online' : 'offline'}`}>{h.is_online ? '在线' : '离线'}</span>}
+                </div>
                 <div className="card-body">
                   <div className="row"><span className="label">OS</span><span>{h.os_type} {h.os_version}</span></div>
                   <div className="row"><span className="label">架构</span><span>{h.arch || '-'}</span></div>

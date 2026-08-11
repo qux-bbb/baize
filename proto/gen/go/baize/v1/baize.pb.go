@@ -2340,6 +2340,118 @@ func (*Empty) Descriptor() ([]byte, []int) {
 	return file_baize_v1_baize_proto_rawDescGZIP(), []int{25}
 }
 
+type RegisterRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"` // Agent 本地生成的 UUID
+	Hostname      string                 `protobuf:"bytes,2,opt,name=hostname,proto3" json:"hostname,omitempty"`              // 主机名
+	Token         string                 `protobuf:"bytes,3,opt,name=token,proto3" json:"token,omitempty"`                    // enrollment token（安装时写入 authd.pass）
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegisterRequest) Reset() {
+	*x = RegisterRequest{}
+	mi := &file_baize_v1_baize_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterRequest) ProtoMessage() {}
+
+func (x *RegisterRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_baize_v1_baize_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterRequest.ProtoReflect.Descriptor instead.
+func (*RegisterRequest) Descriptor() ([]byte, []int) {
+	return file_baize_v1_baize_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *RegisterRequest) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *RegisterRequest) GetHostname() string {
+	if x != nil {
+		return x.Hostname
+	}
+	return ""
+}
+
+func (x *RegisterRequest) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
+type RegisterResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`    // Server 确认的 agent_id（回显）
+	AgentKey      string                 `protobuf:"bytes,2,opt,name=agent_key,json=agentKey,proto3" json:"agent_key,omitempty"` // 通信身份密钥（Agent 存 client.key，连接时携带）
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegisterResponse) Reset() {
+	*x = RegisterResponse{}
+	mi := &file_baize_v1_baize_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterResponse) ProtoMessage() {}
+
+func (x *RegisterResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_baize_v1_baize_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterResponse.ProtoReflect.Descriptor instead.
+func (*RegisterResponse) Descriptor() ([]byte, []int) {
+	return file_baize_v1_baize_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *RegisterResponse) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *RegisterResponse) GetAgentKey() string {
+	if x != nil {
+		return x.AgentKey
+	}
+	return ""
+}
+
 var File_baize_v1_baize_proto protoreflect.FileDescriptor
 
 const file_baize_v1_baize_proto_rawDesc = "" +
@@ -2561,8 +2673,16 @@ const file_baize_v1_baize_proto_rawDesc = "" +
 	"\rerror_message\x18\x03 \x01(\tR\ferrorMessage\x12\x16\n" +
 	"\x06output\x18\x04 \x01(\tR\x06output\x12&\n" +
 	"\x0fcompleted_at_ns\x18\x05 \x01(\x04R\rcompletedAtNs\"\a\n" +
-	"\x05Empty2\xb9\x01\n" +
-	"\fBaizeService\x125\n" +
+	"\x05Empty\"^\n" +
+	"\x0fRegisterRequest\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1a\n" +
+	"\bhostname\x18\x02 \x01(\tR\bhostname\x12\x14\n" +
+	"\x05token\x18\x03 \x01(\tR\x05token\"J\n" +
+	"\x10RegisterResponse\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1b\n" +
+	"\tagent_key\x18\x02 \x01(\tR\bagentKey2\xfc\x01\n" +
+	"\fBaizeService\x12A\n" +
+	"\bRegister\x12\x19.baize.v1.RegisterRequest\x1a\x1a.baize.v1.RegisterResponse\x125\n" +
 	"\vAgentStream\x12\x0f.baize.v1.Event\x1a\x11.baize.v1.Command(\x010\x01\x12?\n" +
 	"\x13ReportCommandResult\x12\x17.baize.v1.CommandResult\x1a\x0f.baize.v1.Empty\x121\n" +
 	"\tHeartbeat\x12\x13.baize.v1.AgentInfo\x1a\x0f.baize.v1.EmptyB8Z6github.com/qux-bbb/baize/proto/gen/go/baize/v1;baizev1b\x06proto3"
@@ -2579,7 +2699,7 @@ func file_baize_v1_baize_proto_rawDescGZIP() []byte {
 	return file_baize_v1_baize_proto_rawDescData
 }
 
-var file_baize_v1_baize_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
+var file_baize_v1_baize_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
 var file_baize_v1_baize_proto_goTypes = []any{
 	(*AgentInfo)(nil),                  // 0: baize.v1.AgentInfo
 	(*ProcessCreateEvent)(nil),         // 1: baize.v1.ProcessCreateEvent
@@ -2607,7 +2727,9 @@ var file_baize_v1_baize_proto_goTypes = []any{
 	(*QuerySystemInfoCommand)(nil),     // 23: baize.v1.QuerySystemInfoCommand
 	(*CommandResult)(nil),              // 24: baize.v1.CommandResult
 	(*Empty)(nil),                      // 25: baize.v1.Empty
-	nil,                                // 26: baize.v1.ConfigureEventTypesCommand.CategoriesEntry
+	(*RegisterRequest)(nil),            // 26: baize.v1.RegisterRequest
+	(*RegisterResponse)(nil),           // 27: baize.v1.RegisterResponse
+	nil,                                // 28: baize.v1.ConfigureEventTypesCommand.CategoriesEntry
 }
 var file_baize_v1_baize_proto_depIdxs = []int32{
 	11, // 0: baize.v1.SystemStateEvent.processes:type_name -> baize.v1.ProcessInfo
@@ -2626,7 +2748,7 @@ var file_baize_v1_baize_proto_depIdxs = []int32{
 	10, // 13: baize.v1.Event.dns_query:type_name -> baize.v1.DnsQueryEvent
 	13, // 14: baize.v1.Event.system_state:type_name -> baize.v1.SystemStateEvent
 	14, // 15: baize.v1.Alert.source_events:type_name -> baize.v1.Event
-	26, // 16: baize.v1.ConfigureEventTypesCommand.categories:type_name -> baize.v1.ConfigureEventTypesCommand.CategoriesEntry
+	28, // 16: baize.v1.ConfigureEventTypesCommand.categories:type_name -> baize.v1.ConfigureEventTypesCommand.CategoriesEntry
 	16, // 17: baize.v1.Command.isolate:type_name -> baize.v1.IsolateCommand
 	17, // 18: baize.v1.Command.kill_process:type_name -> baize.v1.KillProcessCommand
 	18, // 19: baize.v1.Command.delete_file:type_name -> baize.v1.DeleteFileCommand
@@ -2634,14 +2756,16 @@ var file_baize_v1_baize_proto_depIdxs = []int32{
 	20, // 21: baize.v1.Command.configure_file_watch:type_name -> baize.v1.ConfigureFileWatchCommand
 	23, // 22: baize.v1.Command.query_system_info:type_name -> baize.v1.QuerySystemInfoCommand
 	21, // 23: baize.v1.Command.configure_event_types:type_name -> baize.v1.ConfigureEventTypesCommand
-	14, // 24: baize.v1.BaizeService.AgentStream:input_type -> baize.v1.Event
-	24, // 25: baize.v1.BaizeService.ReportCommandResult:input_type -> baize.v1.CommandResult
-	0,  // 26: baize.v1.BaizeService.Heartbeat:input_type -> baize.v1.AgentInfo
-	22, // 27: baize.v1.BaizeService.AgentStream:output_type -> baize.v1.Command
-	25, // 28: baize.v1.BaizeService.ReportCommandResult:output_type -> baize.v1.Empty
-	25, // 29: baize.v1.BaizeService.Heartbeat:output_type -> baize.v1.Empty
-	27, // [27:30] is the sub-list for method output_type
-	24, // [24:27] is the sub-list for method input_type
+	26, // 24: baize.v1.BaizeService.Register:input_type -> baize.v1.RegisterRequest
+	14, // 25: baize.v1.BaizeService.AgentStream:input_type -> baize.v1.Event
+	24, // 26: baize.v1.BaizeService.ReportCommandResult:input_type -> baize.v1.CommandResult
+	0,  // 27: baize.v1.BaizeService.Heartbeat:input_type -> baize.v1.AgentInfo
+	27, // 28: baize.v1.BaizeService.Register:output_type -> baize.v1.RegisterResponse
+	22, // 29: baize.v1.BaizeService.AgentStream:output_type -> baize.v1.Command
+	25, // 30: baize.v1.BaizeService.ReportCommandResult:output_type -> baize.v1.Empty
+	25, // 31: baize.v1.BaizeService.Heartbeat:output_type -> baize.v1.Empty
+	28, // [28:32] is the sub-list for method output_type
+	24, // [24:28] is the sub-list for method input_type
 	24, // [24:24] is the sub-list for extension type_name
 	24, // [24:24] is the sub-list for extension extendee
 	0,  // [0:24] is the sub-list for field type_name
@@ -2680,7 +2804,7 @@ func file_baize_v1_baize_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_baize_v1_baize_proto_rawDesc), len(file_baize_v1_baize_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   27,
+			NumMessages:   29,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

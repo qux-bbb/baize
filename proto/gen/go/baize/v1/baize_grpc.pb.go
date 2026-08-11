@@ -19,6 +19,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	BaizeService_Register_FullMethodName            = "/baize.v1.BaizeService/Register"
 	BaizeService_AgentStream_FullMethodName         = "/baize.v1.BaizeService/AgentStream"
 	BaizeService_ReportCommandResult_FullMethodName = "/baize.v1.BaizeService/ReportCommandResult"
 	BaizeService_Heartbeat_FullMethodName           = "/baize.v1.BaizeService/Heartbeat"
@@ -28,6 +29,8 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type BaizeServiceClient interface {
+	// 注册: Agent 首次启动（无 client.key）时用 enrollment token 换取通信身份密钥
+	Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error)
 	// 双向流: Agent 维持长连接
 	//
 	//	→ Agent 上传 Event 流 (实时遥测)
@@ -45,6 +48,16 @@ type baizeServiceClient struct {
 
 func NewBaizeServiceClient(cc grpc.ClientConnInterface) BaizeServiceClient {
 	return &baizeServiceClient{cc}
+}
+
+func (c *baizeServiceClient) Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RegisterResponse)
+	err := c.cc.Invoke(ctx, BaizeService_Register_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *baizeServiceClient) AgentStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[Event, Command], error) {
@@ -84,6 +97,8 @@ func (c *baizeServiceClient) Heartbeat(ctx context.Context, in *AgentInfo, opts 
 // All implementations must embed UnimplementedBaizeServiceServer
 // for forward compatibility.
 type BaizeServiceServer interface {
+	// 注册: Agent 首次启动（无 client.key）时用 enrollment token 换取通信身份密钥
+	Register(context.Context, *RegisterRequest) (*RegisterResponse, error)
 	// 双向流: Agent 维持长连接
 	//
 	//	→ Agent 上传 Event 流 (实时遥测)
@@ -103,6 +118,9 @@ type BaizeServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedBaizeServiceServer struct{}
 
+func (UnimplementedBaizeServiceServer) Register(context.Context, *RegisterRequest) (*RegisterResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Register not implemented")
+}
 func (UnimplementedBaizeServiceServer) AgentStream(grpc.BidiStreamingServer[Event, Command]) error {
 	return status.Error(codes.Unimplemented, "method AgentStream not implemented")
 }
@@ -131,6 +149,24 @@ func RegisterBaizeServiceServer(s grpc.ServiceRegistrar, srv BaizeServiceServer)
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&BaizeService_ServiceDesc, srv)
+}
+
+func _BaizeService_Register_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RegisterRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BaizeServiceServer).Register(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: BaizeService_Register_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BaizeServiceServer).Register(ctx, req.(*RegisterRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _BaizeService_AgentStream_Handler(srv interface{}, stream grpc.ServerStream) error {
@@ -183,6 +219,10 @@ var BaizeService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "baize.v1.BaizeService",
 	HandlerType: (*BaizeServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Register",
+			Handler:    _BaizeService_Register_Handler,
+		},
 		{
 			MethodName: "ReportCommandResult",
 			Handler:    _BaizeService_ReportCommandResult_Handler,

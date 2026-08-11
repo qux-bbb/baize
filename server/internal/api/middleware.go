@@ -9,10 +9,10 @@ import (
 )
 
 // isDownloadPath 判断是否为允许 ?token= 鉴权的下载类端点
-// （仅下载端点支持 query token，避免 token 在 URL 中被广泛暴露）
+// （仅导出端点支持 query token，避免 token 在 URL 中被广泛暴露）
 func isDownloadPath(path string) bool {
 	switch path {
-	case "/api/agent/package", "/api/agent/installer", "/api/export/events", "/api/export/alerts":
+	case "/api/export/events", "/api/export/alerts":
 		return true
 	}
 	return false
@@ -92,6 +92,10 @@ func AuthMiddleware(am *AuthManager) func(http.Handler) http.Handler {
 
 func isPublicPath(path string) bool {
 	if path == "/api/login" || path == "/api/health" {
+		return true
+	}
+	// Agent 安装包公开下载（通用包：不含实例地址/身份，ca.crt 为公钥）
+	if path == "/api/agent/package" || path == "/api/agent/installer" {
 		return true
 	}
 	if path == "/" || strings.HasPrefix(path, "/assets/") {

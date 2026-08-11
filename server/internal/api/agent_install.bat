@@ -4,6 +4,8 @@ cd /d "%~dp0"
 
 echo ============================================
 echo  Baize Agent 安装程序
+echo  用法: install.bat ^<Server地址^> [注册token]
+echo  例:   install.bat https://192.168.1.10:50051 baize-xxxx
 echo ============================================
 echo.
 
@@ -11,7 +13,7 @@ REM ── 1. 自动请求管理员权限（非管理员时 UAC 提升自身重跑）──
 net session >nul 2>&1
 if %errorlevel% neq 0 (
     echo 需要管理员权限，正在请求提升...
-    powershell -Command "Start-Process -FilePath '%~f0' -Verb RunAs" >nul 2>&1
+    powershell -Command "Start-Process -FilePath '%~f0' -ArgumentList '%~1','%~2' -Verb RunAs" >nul 2>&1
     if !errorlevel! neq 0 (
         echo [错误] 未能获取管理员权限，请右键选择"以管理员身份运行"
         pause
@@ -54,6 +56,34 @@ if not exist "%INSTALL_DIR%\ca.crt" (
     echo [警告] 未找到 ca.crt，TLS 连接将失败（请从 Server 下载页重新获取完整包）
 )
 echo [OK] 文件已安装到 %INSTALL_DIR%
+
+REM ── 4.5 写入 Server 地址与注册 token（install.bat <Server地址> [注册token]）──
+if not "%~1"=="" (
+    "%INSTALL_DIR%\baize-agent.exe" --write-config "%~1"
+    if !errorlevel! neq 0 (
+        echo [错误] 写入 Server 地址失败
+        pause
+        exit /b 1
+    )
+    echo [OK] Server 地址已写入: %~1
+) else (
+    echo [警告] 未指定 Server 地址（用法: install.bat ^<Server地址^> [注册token]）
+    echo        可从 Dashboard 下载页复制完整命令
+)
+
+if not "%~2"=="" (
+    "%INSTALL_DIR%\baize-agent.exe" --write-token "%~2"
+    if !errorlevel! neq 0 (
+        echo [错误] 写入注册 token 失败
+        pause
+        exit /b 1
+    )
+    echo [OK] 注册 token 已写入
+) else (
+    echo [警告] 未指定注册 token，Agent 首次启动将无法注册
+    echo        可从 Dashboard 下载页获取 token 后重装
+)
+
 
 REM ── 5. 启用进程创建审计（4688，只需一次） ──
 auditpol /set /subcategory:{0CCE922B-69AE-11D9-BED3-505054503030} /success:enable >nul 2>&1

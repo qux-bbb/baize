@@ -18,7 +18,10 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
 	pb "github.com/qux-bbb/baize/proto/gen/go/baize/v1"
 	"github.com/qux-bbb/baize/server/internal/api"
@@ -34,6 +37,30 @@ type baizeServer struct {
 	engine   *engine.Engine
 	cmdBus   *engine.CommandBus
 	cfg      *engine.ConfigManager
+	registry *api.AgentRegistry
+}
+
+// agentKeyFromContext 从 gRPC metadata 提取 Agent 身份密钥（baize-agent-key）
+func agentKeyFromContext(ctx context.Context) string {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return ""
+	}
+	if vals := md.Get("baize-agent-key"); len(vals) > 0 {
+		return vals[0]
+	}
+	return ""
+}
+
+// Register 注册 RPC：Agent 首次启动（无 client.key）凭 enrollment token 换取通信身份密钥
+func (s *baizeServer) Register(ctx context.Context, req *pb.RegisterRequest) (*pb.RegisterResponse, error) {
+	key, err := s.registry.Register(req.GetAgentId(), req.GetHostname(), req.GetToken())
+	if err != nil {
+		log.Printf("[Register] 拒绝注册 %s (%s): %v", req.GetAgentId(), req.GetHostname(), err)
+		return nil, status.Error(codes.PermissionDenied, err.Error())
+	}
+	log.Printf("[Register] Agent %s (%s) 注册成功", req.GetAgentId(), req.GetHostname())
+	return &pb.RegisterResponse{AgentId: req.GetAgentId(), AgentKey: key}, nil
 }
 
 func (s *baizeServer) AgentStream(stream pb.BaizeService_AgentStreamServer) error {
@@ -48,6 +75,14 @@ func (s *baizeServer) AgentStream(stream pb.BaizeService_AgentStreamServer) erro
 
 	agentID := first.GetAgentInfo().GetAgentId()
 	hostname := first.GetAgentInfo().GetHostname()
+
+	// 身份校验：metadata 中的 agent_key 必须与注册表匹配（未注册/吊销/密钥不符 → 拒绝）
+	agentKey := agentKeyFromContext(stream.Context())
+	if agentKey == "" || !s.registry.VerifyAgentKey(agentID, agentKey) {
+		log.Printf("[Connect] 拒绝连接（未注册或身份无效）: %s (%s)", agentID, hostname)
+		return status.Error(codes.Unauthenticated, "未注册的 Agent（请先使用有效的 enrollment token 注册）")
+	}
+	s.registry.Touch(agentID)
 	log.Printf("[Connect] Agent %s (%s) 已认证", agentID, hostname)
 
 	// 注册指令通道
@@ -107,6 +142,14 @@ func (s *baizeServer) AgentStream(stream pb.BaizeService_AgentStreamServer) erro
 			close(cmdChan)
 			return err
 		}
+		// 吊销检查：注册记录删除（Agent 被吊销）后，心跳被拒会触发 Agent 断开；
+		// 这里在事件路径上再兜底一次（有事件流动时即时断开）
+		if !s.registry.VerifyAgentKey(agentID, agentKey) {
+			log.Printf("[Connect] Agent %s 身份已失效（可能被吊销），断开连接", agentID)
+			close(cmdChan)
+			return status.Error(codes.Unauthenticated, "Agent 身份已失效")
+		}
+		s.registry.Touch(agentID)
 		eventCount++
 		processEvent(event, s.es, s.engine)
 	}
@@ -187,8 +230,15 @@ func printEvent(event *pb.Event, agentID, hostname string, seq uint64) {
 }
 
 func (s *baizeServer) Heartbeat(ctx context.Context, info *pb.AgentInfo) (*pb.Empty, error) {
+	agentID := info.GetAgentId()
+	// 身份校验：吊销的 Agent 拒绝心跳（在线连接在其事件/心跳周期内被断开）
+	if agentKey := agentKeyFromContext(ctx); agentKey == "" || !s.registry.VerifyAgentKey(agentID, agentKey) {
+		log.Printf("[Heartbeat] 拒绝未注册 Agent: %s (%s)", agentID, info.GetHostname())
+		return nil, status.Error(codes.Unauthenticated, "未注册的 Agent")
+	}
+	s.registry.Touch(agentID)
 	log.Printf("[Heartbeat] Agent=%s (%s) OS=%s v%s",
-		info.GetAgentId(), info.GetHostname(), info.GetOsType(), info.GetOsVersion())
+		agentID, info.GetHostname(), info.GetOsType(), info.GetOsVersion())
 	// 注册/心跳：写入（upsert）主机实体文档
 	if s.es != nil {
 		now := time.Now().UTC().Format(time.RFC3339Nano)
@@ -296,6 +346,9 @@ func main() {
 	authPath := filepath.Join(*dataDir, "auth.json")
 	authManager := api.NewAuthManager(authPath)
 
+	// 初始化 Agent 注册表（enrollment token + 通信身份密钥）
+	registry := api.NewAgentRegistry(filepath.Join(*dataDir, "agents.json"))
+
 	// TLS 证书（自动生成，Agent 需配置 ca 指向 data-dir 的 ca.crt）
 	certFile, keyFile, caFile, err := ensureTLS(*dataDir, *publicAddr)
 	if err != nil {
@@ -317,17 +370,22 @@ func main() {
 	})))
 	cmdBus := engine.NewCommandBus()
 	cfg := engine.NewConfigManager()
-	pb.RegisterBaizeServiceServer(s, &baizeServer{es: bleveStore, engine: eng, cmdBus: cmdBus, cfg: cfg})
+	pb.RegisterBaizeServiceServer(s, &baizeServer{es: bleveStore, engine: eng, cmdBus: cmdBus, cfg: cfg, registry: registry})
 
 	// 启动 HTTP API + Dashboard Server
 	{
 		mux := http.NewServeMux()
 		if bleveStore != nil {
-			apiHandler := api.New(bleveStore, cmdBus, cfg, authManager, *agentBinary, *publicAddr, *agentInstaller, caFile)
+			apiHandler := api.New(bleveStore, cmdBus, cfg, authManager, registry, *agentBinary, *publicAddr, *agentInstaller, caFile)
 			mux.HandleFunc("POST /api/login", apiHandler.Login)
 			mux.HandleFunc("POST /api/change-password", apiHandler.ChangePassword)
 			mux.HandleFunc("POST /api/logout", apiHandler.Logout)
 			mux.HandleFunc("GET /api/hosts", apiHandler.Hosts)
+			mux.HandleFunc("GET /api/agents", apiHandler.AgentList)
+			mux.HandleFunc("DELETE /api/agents/{id}", apiHandler.AgentDelete)
+			mux.HandleFunc("GET /api/enrollment-tokens", apiHandler.EnrollmentTokens)
+			mux.HandleFunc("POST /api/enrollment-tokens", apiHandler.EnrollmentTokens)
+			mux.HandleFunc("DELETE /api/enrollment-tokens/{id}", apiHandler.EnrollmentTokens)
 			mux.HandleFunc("GET /api/alerts", apiHandler.Alerts)
 			mux.HandleFunc("GET /api/alert", apiHandler.AlertDetail)
 			mux.HandleFunc("GET /api/agent/info", apiHandler.AgentInfo)

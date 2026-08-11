@@ -1,11 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   Baize (白泽) Agent 安装包定义（WiX 3.14，纯 core schema，无扩展依赖）
-  构建: build_msi.bat [baize-agent.exe 路径]
-  安装: msiexec /i baize-agent.msi /q SERVER_ADDR="http://10.0.0.1:50051"
+  构建: build_msi.bat [baize-agent.exe 路径] [SERVER_ADDR]
+  安装: msiexec /i baize-agent.msi /q SERVER_ADDR="http://10.0.0.1:50051" BAIZE_ENROLLMENT_TOKEN="baize-xxxx"
   说明:
     - 不传 SERVER_ADDR 时 agent.conf 保持空 server，装后可手动编辑
       C:\Program Files\Baize\agent.conf 并重启服务来配置
+    - BAIZE_ENROLLMENT_TOKEN 写入安装目录 authd.pass（Agent 首次启动注册用，
+      从 Dashboard 下载页获取；不传则装完需手动补，否则 Agent 无法注册）
     - 服务注册/删除复用 Agent 自身的 install / uninstall 子命令
       （windows-service crate 实现，MSI 只负责在合适时机调用）
     - auditpol（4688 审计）由 Agent 自身处理，安装包不干预
@@ -23,6 +25,8 @@
     <!-- SERVER_ADDR: Agent 连接的 Server gRPC 地址（如 http://10.0.0.1:50051）。
          Secure=yes 允许命令行/转换文件传入；deferred CA 需要。 -->
     <Property Id="SERVER_ADDR" Secure="yes" />
+    <!-- BAIZE_ENROLLMENT_TOKEN: 注册 token（写 authd.pass，Agent 首次启动注册用） -->
+    <Property Id="BAIZE_ENROLLMENT_TOKEN" Secure="yes" />
 
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFiles64Folder">
@@ -58,6 +62,16 @@
                   Property="RunWriteConfigCmd"
                   Value="&quot;[INSTALLFOLDER]baize-agent.exe&quot; --write-config &quot;[SERVER_ADDR]&quot;" />
     <CustomAction Id="RunWriteConfigCmd"
+                  BinaryKey="WixCA"
+                  DllEntry="WixQuietExec"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="check" />
+    <CustomAction Id="SetWriteTokenCmd"
+                  Return="check"
+                  Property="RunWriteTokenCmd"
+                  Value="&quot;[INSTALLFOLDER]baize-agent.exe&quot; --write-token &quot;[BAIZE_ENROLLMENT_TOKEN]&quot;" />
+    <CustomAction Id="RunWriteTokenCmd"
                   BinaryKey="WixCA"
                   DllEntry="WixQuietExec"
                   Execute="deferred"
@@ -112,6 +126,12 @@
       </Custom>
       <Custom Action="RunWriteConfigCmd" After="InstallFiles">
         <![CDATA[SERVER_ADDR <> ""]]>
+      </Custom>
+      <Custom Action="SetWriteTokenCmd" Before="RunWriteTokenCmd">
+        <![CDATA[BAIZE_ENROLLMENT_TOKEN <> ""]]>
+      </Custom>
+      <Custom Action="RunWriteTokenCmd" After="InstallFiles">
+        <![CDATA[BAIZE_ENROLLMENT_TOKEN <> ""]]>
       </Custom>
       <Custom Action="SetInstallSvcCmd" Before="RunInstallSvcCmd">
         <![CDATA[NOT REMOVE~="ALL"]]>

@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,18 +21,19 @@ type Handler struct {
 	cmdBus  *engine.CommandBus
 	cfg     *engine.ConfigManager
 	auth    *AuthManager
+	reg     *AgentRegistry
 	// agentBinary: agent.exe 路径（--agent-binary），zip 打包下载用
 	agentBinary string
-	// publicAddr: Server 对外 gRPC 地址（--public-addr），注入 agent.conf
+	// publicAddr: Server 对外 gRPC 地址（--public-addr），下载页展示用
 	publicAddr string
 	// agentInstaller: 预构建的 MSI 安装包路径（--agent-installer），直接下发
 	agentInstaller string
-	// caFile: TLS CA 证书路径（data-dir/ca.crt），注入下载包（zip 内置 ca.crt，agent.conf ca 字段）
+	// caFile: TLS CA 证书路径（data-dir/ca.crt），随下载包分发（公钥，供 Agent 验证 Server）
 	caFile string
 }
 
-func New(s *store.Store, cmdBus *engine.CommandBus, cfg *engine.ConfigManager, auth *AuthManager, agentBinary, publicAddr, agentInstaller, caFile string) *Handler {
-	return &Handler{store: s, cmdBus: cmdBus, cfg: cfg, auth: auth, agentBinary: agentBinary, publicAddr: publicAddr, agentInstaller: agentInstaller, caFile: caFile}
+func New(s *store.Store, cmdBus *engine.CommandBus, cfg *engine.ConfigManager, auth *AuthManager, reg *AgentRegistry, agentBinary, publicAddr, agentInstaller, caFile string) *Handler {
+	return &Handler{store: s, cmdBus: cmdBus, cfg: cfg, auth: auth, reg: reg, agentBinary: agentBinary, publicAddr: publicAddr, agentInstaller: agentInstaller, caFile: caFile}
 }
 
 // ── 登录 ──────────────────────────────────────────────────
@@ -107,6 +109,72 @@ func (h *Handler) Hosts(w http.ResponseWriter, r *http.Request) {
 		hosts = []store.HostResult{}
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"hosts": hosts})
+}
+
+// ── Enrollment Token 管理（JWT 保护）─────────────────────
+
+// EnrollmentTokens GET: token 列表（不含明文）；POST: 创建 token（明文只返回一次）
+func (h *Handler) EnrollmentTokens(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "GET" {
+		json.NewEncoder(w).Encode(map[string]interface{}{"tokens": h.reg.ListTokens()})
+		return
+	}
+	if r.Method == "DELETE" {
+		id := r.PathValue("id")
+		if id == "" {
+			http.Error(w, "missing id", 400)
+			return
+		}
+		if !h.reg.RevokeToken(id) {
+			http.Error(w, "token 不存在", 404)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"status": "revoked"})
+		return
+	}
+	if r.Method != "POST" {
+		http.Error(w, "method not allowed", 405)
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	token, id := h.reg.CreateToken(req.Name)
+	log.Printf("[Token] 已创建 enrollment token (%s)", id)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"token": token, // 明文只在创建时返回一次
+		"id":    id,
+		"name":  req.Name,
+	})
+}
+
+// ── Agent 注册表管理（JWT 保护）──────────────────────────
+
+// AgentList 返回已注册 Agent（注册表视角，含吊销状态）
+func (h *Handler) AgentList(w http.ResponseWriter, r *http.Request) {
+	agents := h.reg.ListAgents()
+	if agents == nil {
+		agents = []AgentRecord{}
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"agents": agents})
+}
+
+// AgentDelete 吊销 Agent（删除注册记录 → key 立即失效；在线连接由心跳被拒后自行断开）
+func (h *Handler) AgentDelete(w http.ResponseWriter, r *http.Request) {
+	agentID := r.PathValue("id")
+	if agentID == "" {
+		http.Error(w, "missing id", 400)
+		return
+	}
+	if !h.reg.DeleteAgent(agentID) {
+		http.Error(w, "agent 未注册", 404)
+		return
+	}
+	// 立即从指令总线移除（主机列表在线状态马上清除）
+	h.cmdBus.Unregister(agentID)
+	log.Printf("[API] 已吊销 Agent: %s（可用有效 token 重新注册；想永久阻止请吊销 token）", agentID)
+	json.NewEncoder(w).Encode(map[string]string{"status": "revoked"})
 }
 
 // ── 告警列表 ──────────────────────────────────────────────

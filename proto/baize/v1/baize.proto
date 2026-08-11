@@ -302,10 +302,30 @@ message CommandResult {
 message Empty {}
 
 // ---------------------------------------------------------------------------
+// 7b. 注册 (Enrollment)
+//     Agent 首次启动（无 client.key）时，用 enrollment token 换取通信身份密钥。
+//     token 由 Dashboard 生成（可吊销），对标 Wazuh authd 注册机制。
+// ---------------------------------------------------------------------------
+
+message RegisterRequest {
+  string agent_id = 1;            // Agent 本地生成的 UUID
+  string hostname = 2;            // 主机名
+  string token = 3;               // enrollment token（安装时写入 authd.pass）
+}
+
+message RegisterResponse {
+  string agent_id = 1;            // Server 确认的 agent_id（回显）
+  string agent_key = 2;           // 通信身份密钥（Agent 存 client.key，连接时携带）
+}
+
+// ---------------------------------------------------------------------------
 // 8. gRPC 服务定义
 // ---------------------------------------------------------------------------
 
 service BaizeService {
+
+  // 注册: Agent 首次启动（无 client.key）时用 enrollment token 换取通信身份密钥
+  rpc Register(RegisterRequest) returns (RegisterResponse);
 
   // 双向流: Agent 维持长连接
   //   → Agent 上传 Event 流 (实时遥测)

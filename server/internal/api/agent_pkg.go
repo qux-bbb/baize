@@ -27,6 +27,9 @@ import (
 //go:embed agent_install.bat
 var installBatFS embed.FS
 
+//go:embed agent_uninstall.bat
+var uninstallBatFS embed.FS
+
 // AgentInfo 下载页展示的 Agent 打包信息
 type AgentInfo struct {
 	PublicAddr      string `json:"public_addr"`       // 将注入 agent.conf 的 Server 地址
@@ -70,8 +73,13 @@ func (h *Handler) AgentInfo(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(info)
 }
 
-// AgentPackage 打包下载（GET /api/agent/package，需 JWT）
-// zip 内容：baize-agent.exe + agent.conf + install.bat + SHA256SUMS.txt
+// AgentPackage 打包下载（GET /api/agent/package，公开下载）
+// zip 内容：baize-agent.exe + agent.conf + install.bat + ca.crt + SHA256SUMS.txt
+//
+// 通用包模型（对标 Wazuh packages.wazuh.com）：
+//   - agent.conf 不含 Server 地址（安装时由 install.bat/MSI 写入）
+//   - ca.crt 随包分发（CA 公钥，无敏感信息；供 Agent 验证 Server TLS）
+//   - 身份通过 enrollment token 注册获取（见 Register RPC）
 func (h *Handler) AgentPackage(w http.ResponseWriter, r *http.Request) {
 	if h.agentBinary == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "服务端未配置 --agent-binary，无法打包"})
@@ -84,19 +92,13 @@ func (h *Handler) AgentPackage(w http.ResponseWriter, r *http.Request) {
 	}
 	defer exe.Close()
 
-	serverAddr := h.agentServerAddr(h.resolvePublicAddr(r))
-	if serverAddr == "" {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "无法确定 Server 对外地址，请配置 --public-addr"})
-		return
-	}
-
-	// 动态生成 agent.conf（TLS 启用时 server 用 https:// + ca 指向包内 ca.crt）
+	// 通用配置模板：server 留空（安装时填写），ca 指向包内 ca.crt（TLS 公钥随包）
 	ca := ""
 	if h.caFile != "" {
 		ca = "ca.crt"
 	}
 	conf, _ := json.MarshalIndent(map[string]interface{}{
-		"server":     serverAddr,
+		"server":     "",
 		"ca":         ca,
 		"watch_dirs": []string{},
 	}, "", "  ")
@@ -124,6 +126,16 @@ func (h *Handler) AgentPackage(w http.ResponseWriter, r *http.Request) {
 		zw.Close()
 		return
 	}
+	uninstallBat, err := uninstallBatFS.ReadFile("agent_uninstall.bat")
+	if err != nil {
+		zw.Close()
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "uninstall.bat 模板缺失"})
+		return
+	}
+	if err := addZipBytes(zw, "uninstall.bat", uninstallBat); err != nil {
+		zw.Close()
+		return
+	}
 	if h.caFile != "" {
 		caData, err := os.ReadFile(h.caFile)
 		if err != nil {
@@ -142,6 +154,7 @@ func (h *Handler) AgentPackage(w http.ResponseWriter, r *http.Request) {
 	shaLines := fmt.Sprintf("baize-agent.exe  %s\n", exeSum)
 	shaLines += fmt.Sprintf("agent.conf       %s\n", sha256hex(conf))
 	shaLines += fmt.Sprintf("install.bat      %s\n", sha256hex(installBat))
+	shaLines += fmt.Sprintf("uninstall.bat    %s\n", sha256hex(uninstallBat))
 	if h.caFile != "" {
 		if caSum, err := fileSHA256(h.caFile); err == nil {
 			shaLines += fmt.Sprintf("ca.crt           %s\n", caSum)
