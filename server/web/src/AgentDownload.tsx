@@ -35,6 +35,7 @@ export default function AgentDownload() {
   const [tokenName, setTokenName] = useState('')
   // plainCache: token id → 明文（仅组件内存，用于复制/嵌入命令，不落 localStorage）
   const [plainCache, setPlainCache] = useState<Record<string, string>>({})
+  const [plainMissing, setPlainMissing] = useState(false) // 选中 token 无法还原明文（旧版仅存哈希）
   const [creating, setCreating] = useState(false)
   const [agentMsg, setAgentMsg] = useState('')
 
@@ -46,13 +47,7 @@ export default function AgentDownload() {
   const loadTokens = async () => {
     try {
       const d = await fetchJSON<{ tokens: TokenRec[] }>(`${API}/enrollment-tokens`)
-      const list = d.tokens || []
-      setTokens(list)
-      // 默认选中第一个未吊销 token
-      if (!list.some(t => t.id === selectedToken)) {
-        const active = list.find(t => !t.revoked)
-        setSelectedToken(active ? active.id : '')
-      }
+      setTokens(d.tokens || [])
     } catch (e: any) {
       setAgentMsg('加载 token 失败: ' + e.message)
     }
@@ -82,6 +77,7 @@ export default function AgentDownload() {
       // 缓存明文并自动设为当前使用（安装命令嵌入）
       setPlainCache(prev => ({ ...prev, [d.id]: d.token }))
       setSelectedToken(d.id)
+      setPlainMissing(false)
       setTokenName('')
       loadTokens()
     } catch (e: any) {
@@ -121,7 +117,9 @@ export default function AgentDownload() {
   // 选中 = 设为当前使用（安装命令嵌入该 token），并预取明文
   const selectToken = async (t: TokenRec) => {
     setSelectedToken(t.id)
-    await fetchPlain(t.id)
+    setPlainMissing(false)
+    const plain = await fetchPlain(t.id)
+    if (!plain) setPlainMissing(true) // 旧版仅存哈希，无法还原明文
   }
 
   // 安装命令：目标机（Windows）以管理员身份在 PowerShell 执行，一条命令完成 下载→解压→安装。
@@ -129,11 +127,11 @@ export default function AgentDownload() {
   const selectedRec = tokens.find(t => t.id === selectedToken)
   const tokenPlain = plainCache[selectedToken] || '' // 明文（复制命令用）
   const tokenMasked = tokenPlain ? maskPlain(tokenPlain) : (selectedRec?.masked || '') // 掩码（展示用）
-  const tokenDisplay = tokenMasked || '<注册token>'
+  const tokenDisplay = tokenMasked || '' // 无可用掩码时留空，绝不显示占位符
   const buildInstallCmd = () => {
     const origin = window.location.origin
     const addr = agentInfo?.public_addr || '<Server地址>'
-    return `curl.exe -k -o baize.zip "${origin}/api/agent/package"; Expand-Archive baize.zip -Force; .\\baize\\install.bat ${addr} ${tokenPlain || '<注册token>'}`
+    return `curl.exe -k -o baize.zip "${origin}/api/agent/package"; Expand-Archive baize.zip -Force; .\\baize\\install.bat ${addr} ${tokenPlain}`
   }
 
   return (
@@ -193,17 +191,31 @@ export default function AgentDownload() {
         </table>
       )}
 
-      {/* ── 安装命令 ── */}
+      {/* ── 安装命令（仅在选中 token 后展示，避免无选中时出现占位符/坏命令） ── */}
       <h3>🚀 一条命令安装（目标终端 PowerShell 执行）</h3>
-      <pre className="mono" style={{ background: '#0f172a', padding: '0.6rem', borderRadius: '6px', fontSize: '0.72rem', lineHeight: 1.7, overflowX: 'auto', whiteSpace: 'pre-wrap' }}>
+      {selectedRec ? (
+        !tokenPlain && plainMissing ? (
+          <div className="empty" style={{ fontSize: '0.75rem', margin: '0.4rem 0' }}>
+            该 token 为旧版仅存哈希，无法生成安装命令，可吊销重建
+          </div>
+        ) : (
+          <>
+            <pre className="mono" style={{ background: '#0f172a', padding: '0.6rem', borderRadius: '6px', fontSize: '0.72rem', lineHeight: 1.7, overflowX: 'auto', whiteSpace: 'pre-wrap' }}>
 {`curl.exe -k -o baize.zip "${window.location.origin}/api/agent/package"; Expand-Archive baize.zip -Force; .\\baize\\install.bat ${agentInfo?.public_addr || '<Server地址>'} ${tokenDisplay}`}
-      </pre>
-      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.4rem', flexWrap: 'wrap' }}>
-        <button onClick={() => copyText(buildInstallCmd(), '安装命令')}>复制命令</button>
-        <span style={{ fontSize: '0.72rem', opacity: 0.6, alignSelf: 'center' }}>
-          命令中的 token 展示为掩码，点「复制命令」获取的才是完整 token（请勿手动选中文本复制）。curl -k 忽略自签证书校验；包内 SHA256SUMS.txt 可校验完整性
-        </span>
-      </div>
+            </pre>
+            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.4rem', flexWrap: 'wrap' }}>
+              <button onClick={() => copyText(buildInstallCmd(), '安装命令')}>复制命令</button>
+              <span style={{ fontSize: '0.72rem', opacity: 0.6, alignSelf: 'center' }}>
+                命令中的 token 展示为掩码，点「复制命令」获取的才是完整 token（请勿手动选中文本复制）。curl -k 忽略自签证书校验；包内 SHA256SUMS.txt 可校验完整性
+              </span>
+            </div>
+          </>
+        )
+      ) : (
+        <div className="empty" style={{ fontSize: '0.75rem', margin: '0.4rem 0' }}>
+          ⬆ 请先在上方选择一个 token，将自动生成安装命令
+        </div>
+      )}
 
       {/* ── 二进制与校验 ── */}
       <div className="form-group" style={{ marginTop: '0.8rem' }}>
