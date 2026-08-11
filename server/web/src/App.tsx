@@ -29,7 +29,7 @@ interface EventItem {
   summary: string; pid?: number; hostname: string
 }
 
-type Route = { page: 'hosts' } | { page: 'alerts' } | { page: 'events'; host?: string; q?: string } | { page: 'host-detail'; agentId: string } | { page: 'config' }
+type Route = { page: 'hosts' } | { page: 'alerts' } | { page: 'events'; host?: string; q?: string } | { page: 'host-detail'; agentId: string } | { page: 'config' } | { page: 'agent' }
 
 // ── 工具 ──────────────────────────────────────────────
 
@@ -61,6 +61,7 @@ function parseHash(): Route {
   if (path.startsWith('hosts/')) return { page: 'host-detail', agentId: path.slice(6) }
   if (path === 'alerts') return { page: 'alerts' }
   if (path === 'config') return { page: 'config' }
+  if (path === 'agent') return { page: 'agent' }
   if (path === 'events') {
     // 兼容两种参数名：主机详情页跳转用 host=，事件页过滤框用 hostname=
     return { page: 'events', host: params.get('host') || params.get('hostname') || undefined, q: params.get('q') || undefined }
@@ -108,7 +109,6 @@ export default function App() {
   const [searchQ, setSearchQ] = useState('')
   const [hostInput, setHostInput] = useState('')
   const [showChangePwd, setShowChangePwd] = useState(false)
-  const [showAgentDownload, setShowAgentDownload] = useState(false)
   const [exportConfirm, setExportConfirm] = useState<{ kind: 'events' | 'alerts' } | null>(null)
   const [exporting, setExporting] = useState(false)
 
@@ -139,7 +139,7 @@ export default function App() {
 
   // 数据加载
   const load = useCallback(async (overrideToken?: string) => {
-    if (route.page === 'config') return
+    if (route.page === 'config' || route.page === 'agent') return
     setLoading(true); setErr('')
     try {
       const auth = overrideToken || localStorage.getItem('token')
@@ -316,11 +316,13 @@ export default function App() {
           <h1>
             {route.page === 'host-detail' ? (
               <><span className="back" onClick={() => navigate('hosts')}>←</span> <span className="logo">◆</span> {host?.hostname || '主机详情'}</>
+            ) : route.page === 'agent' ? (
+              <><span className="back" onClick={() => navigate('hosts')}>←</span> <span className="logo">◆</span> 下载 Agent</>
             ) : (
               <><span className="logo">◆</span> Baize 白泽 <span className="subtitle">Dashboard</span></>
             )}
           </h1>
-          {route.page !== 'host-detail' && (
+          {route.page !== 'host-detail' && route.page !== 'agent' && (
             <div className="tabs">
               <button onClick={() => navigate('hosts')} className={route.page === 'hosts' ? 'active' : ''}>🖥 主机 ({hosts.length})</button>
               <button onClick={() => navigate('alerts')} className={route.page === 'alerts' ? 'active' : ''}>🚨 告警 ({alerts.length})</button>
@@ -341,13 +343,11 @@ export default function App() {
         {!loading && route.page === 'hosts' && hosts && (
           <>
             <button
-              onClick={() => setShowAgentDownload(v => !v)}
-              className={showAgentDownload ? 'active' : ''}
+              onClick={() => navigate('agent')}
               style={{ marginBottom: '0.8rem' }}
             >
-              📦 下载 Agent {showAgentDownload ? '▾' : '▸'}
+              📦 下载 Agent
             </button>
-            {showAgentDownload && <AgentDownload />}
             <div className="grid">
             {hosts.map(h => (
               <div key={h.agent_id} className="card" onClick={() => navigate('hosts/' + h.agent_id)} style={h.revoked ? { opacity: 0.55 } : undefined}>
@@ -377,6 +377,8 @@ export default function App() {
         )}
 
         {!loading && route.page === 'config' && <ConfigPage />}
+
+        {route.page === 'agent' && <AgentDownload />}
 
         {!loading && route.page === 'host-detail' && host && (
           <div className="host-detail">
