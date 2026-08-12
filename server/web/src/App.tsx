@@ -6,7 +6,7 @@ import LoginPage from './LoginPage'
 import ChangePasswordPage from './ChangePasswordPage'
 import ChangePasswordModal from './ChangePasswordModal'
 import { API, fetchJSON, initAuth, setAuth, clearAuth, isMustChangePassword } from './api'
-import { BaizeGrid, SEV, formatTime, sevCell, linkCell, statusCell, timeFormatter, sevComparator } from './grid'
+import { BaizeGrid, SEV, formatTime, sevCell, linkCell, statusCell, timeFormatter, sevComparator, dateFilterParams } from './grid'
 import './config.css'
 
 interface Host {
@@ -267,51 +267,51 @@ export default function App() {
 
   const hostCols = useMemo<ColDef<Host>[]>(() => [
     { headerName: '主机名', field: 'hostname', flex: 1.2, cellStyle: { fontWeight: 600 }, tooltipField: 'hostname' },
-    { headerName: '状态', colId: 'status', width: 110, valueGetter: p => (p.data!.revoked ? 2 : p.data!.is_online ? 1 : 0), cellRenderer: statusCell },
+    { headerName: '状态', colId: 'status', width: 110, valueGetter: p => (p.data!.revoked ? 2 : p.data!.is_online ? 1 : 0), cellRenderer: statusCell, filter: true, filterValueGetter: p => (p.data!.revoked ? '已吊销' : p.data!.is_online ? '在线' : '离线') },
     { headerName: 'OS', colId: 'os', flex: 1, valueGetter: p => `${p.data!.os_type} ${p.data!.os_version}` },
     { headerName: '架构', field: 'arch', width: 90 },
     { headerName: 'Agent', field: 'agent_version', width: 110 },
-    { headerName: '事件数', field: 'event_count', width: 95, valueFormatter: p => Number(p.value).toLocaleString() },
+    { headerName: '事件数', field: 'event_count', width: 95, valueFormatter: p => Number(p.value).toLocaleString(), filter: 'agNumberColumnFilter' },
     { headerName: 'IP', field: 'ips', width: 190, valueFormatter: p => (p.value || []).join(', ') },
-    { headerName: '最后活跃', field: 'last_seen', width: 165, valueFormatter: timeFormatter },
+    { headerName: '最后活跃', field: 'last_seen', width: 165, valueFormatter: timeFormatter, filter: 'agDateColumnFilter', filterParams: dateFilterParams },
   ], [])
 
   const alertCols = useMemo<ColDef<Alert>[]>(() => [
-    { headerName: '严重度', field: 'severity', width: 110, cellRenderer: sevCell, comparator: sevComparator },
+    { headerName: '严重度', field: 'severity', width: 110, cellRenderer: sevCell, comparator: sevComparator, filter: true },
     { headerName: '规则', field: 'rule_name', flex: 1.4, tooltipField: 'rule_name' },
     { headerName: '主机', field: 'hostname', width: 140 },
     { headerName: '类型', field: 'event_type', width: 130 },
-    { headerName: '时间', field: '@timestamp', width: 165, valueFormatter: timeFormatter, sort: 'desc' },
+    { headerName: '时间', field: '@timestamp', width: 165, valueFormatter: timeFormatter, sort: 'desc', filter: 'agDateColumnFilter', filterParams: dateFilterParams },
   ], [])
 
   const eventCols = useMemo<ColDef<EventItem>[]>(() => [
-    { headerName: '时间', field: '@timestamp', width: 165, valueFormatter: timeFormatter, sort: 'desc' },
+    { headerName: '时间', field: '@timestamp', width: 165, valueFormatter: timeFormatter, sort: 'desc', filter: 'agDateColumnFilter', filterParams: dateFilterParams },
     { headerName: '主机', field: 'hostname', width: 140 },
-    { headerName: '类型', field: 'event_type', width: 150, valueFormatter: p => p.data!.event_type + (p.data!.event_action ? '/' + p.data!.event_action : '') },
+    { headerName: '类型', field: 'event_type', width: 150, valueFormatter: p => p.data!.event_type + (p.data!.event_action ? '/' + p.data!.event_action : ''), filterValueGetter: p => p.data!.event_type + (p.data!.event_action ? '/' + p.data!.event_action : '') },
     { headerName: '摘要', field: 'summary', flex: 1, tooltipField: 'summary', cellClass: 'summary-cell' },
-    { headerName: '', colId: 'action', width: 64, sortable: false, resizable: false, cellRenderer: linkCell(setEventDetail) },
+    { headerName: '', colId: 'action', width: 64, sortable: false, resizable: false, filter: false, floatingFilter: false, cellRenderer: linkCell(setEventDetail) },
   ], [])
 
   const procCols = useMemo<ColDef<any>[]>(() => [
-    { headerName: 'PID', field: 'pid', width: 80 },
+    { headerName: 'PID', field: 'pid', width: 80, filter: 'agNumberColumnFilter' },
     { headerName: '名称', field: 'name', flex: 1, tooltipField: 'name' },
     { headerName: '路径', field: 'exe', flex: 2.4, tooltipField: 'exe', cellClass: 'summary-cell' },
-    { headerName: 'CPU%', field: 'cpu', width: 80, valueFormatter: p => (p.value != null ? Number(p.value).toFixed(1) : '-') },
-    { headerName: '内存', field: 'memory', width: 90, valueFormatter: p => (p.value != null ? (Number(p.value) / 1024).toFixed(0) + 'KB' : '-') },
-    { headerName: '', colId: 'action', width: 64, sortable: false, resizable: false, cellRenderer: linkCell(setProcDetail) },
+    { headerName: 'CPU%', field: 'cpu', width: 80, valueFormatter: p => (p.value != null ? Number(p.value).toFixed(1) : '-'), filter: 'agNumberColumnFilter' },
+    { headerName: '内存', field: 'memory', width: 90, valueFormatter: p => (p.value != null ? (Number(p.value) / 1024).toFixed(0) + 'KB' : '-'), filter: 'agNumberColumnFilter' },
+    { headerName: '', colId: 'action', width: 64, sortable: false, resizable: false, filter: false, floatingFilter: false, cellRenderer: linkCell(setProcDetail) },
   ], [])
 
   const tcpCols = useMemo<ColDef<any>[]>(() => [
-    { headerName: 'PID', field: 'pid', width: 80 },
+    { headerName: 'PID', field: 'pid', width: 80, filter: 'agNumberColumnFilter' },
     { headerName: '本地', field: 'local', flex: 1, tooltipField: 'local' },
     { headerName: '远程', field: 'remote', flex: 1, tooltipField: 'remote' },
-    { headerName: '状态', field: 'state', width: 110 },
+    { headerName: '状态', field: 'state', width: 110, filter: true },
   ], [])
 
   const udpCols = useMemo<ColDef<any>[]>(() => [
-    { headerName: 'PID', field: 'pid', width: 80 },
+    { headerName: 'PID', field: 'pid', width: 80, filter: 'agNumberColumnFilter' },
     { headerName: '本地', field: 'local', flex: 1, tooltipField: 'local' },
-    { headerName: '状态', field: 'state', width: 110 },
+    { headerName: '状态', field: 'state', width: 110, filter: true },
   ], [])
 
   // ── 判断当前应该渲染哪个页面 ──────────────────────────

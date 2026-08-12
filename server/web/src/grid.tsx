@@ -50,6 +50,7 @@ export const baizeTheme = themeQuartz.withParams({
   rowHoverColor: 'rgba(34, 211, 238, 0.06)',
   selectedRowBackgroundColor: 'rgba(34, 211, 238, 0.12)',
   cellTextColor: '#e2e8f0',
+  foregroundColor: '#e2e8f0',
   headerTextColor: '#64748b',
 })
 
@@ -75,6 +76,15 @@ export const statusCell = (p: ICellRendererParams) => {
 // 时间格式化（ISO 字符串 → yyyy-MM-dd HH:mm:ss）
 export const timeFormatter = (p: ValueFormatterParams) => formatTime(p.value)
 
+// 时间列过滤参数：数据是 ISO 字符串，解析为 {day, month, year} 供 agDateColumnFilter 使用
+export const dateFilterParams = {
+  dateParser: (v: string) => {
+    if (!v) return null
+    const d = new Date(v)
+    return isNaN(d.getTime()) ? null : { day: d.getDate(), month: d.getMonth() + 1, year: d.getFullYear() }
+  },
+}
+
 // ── 状态持久化 ─────────────────────────────────────────
 function loadState(key: string): GridState | undefined {
   try {
@@ -99,6 +109,8 @@ export function BaizeGrid<T>({ columnDefs, rowData, stateKey, height = 520, onRo
   const timerRef = useRef<number | undefined>(undefined)
   const initialState = useMemo(() => loadState(stateKey), [stateKey])
   const [colPanelOpen, setColPanelOpen] = useState(false)
+  // 全局搜索（Quick Filter）输入
+  const [quickFilter, setQuickFilter] = useState('')
   // 列显隐面板的勾选状态（打开面板时从 api 读取，含 localStorage 恢复的显隐）
   const [colStates, setColStates] = useState<{ colId: string; header: string; visible: boolean }[]>([])
   // 可显隐的列（有 headerName 的列；无表头的操作列不参与）
@@ -134,11 +146,35 @@ export function BaizeGrid<T>({ columnDefs, rowData, stateKey, height = 520, onRo
     setColStates(prev => prev.map(c => c.colId === colId ? { ...c, visible: !newHide } : c))
   }
 
+  // 重置视图：列宽/排序/显隐/重排 + 列过滤 + 全局搜索，全部恢复默认
+  const resetView = () => {
+    apiRef.current?.resetColumnState()
+    apiRef.current?.setFilterModel(null)
+    setQuickFilter('')
+  }
+
   return (
     <div className={`baize-grid-wrap${onRowClicked ? ' clickable-rows' : ''}`}>
       <div className="grid-tools">
+        <div className="grid-search">
+          <input
+            className="grid-search-input"
+            placeholder="🔍 全局搜索…"
+            value={quickFilter}
+            onChange={(e) => {
+              setQuickFilter(e.target.value)
+              apiRef.current?.setGridOption('quickFilterText', e.target.value || undefined)
+            }}
+          />
+          {quickFilter && (
+            <button className="grid-search-clear" title="清除搜索" onClick={() => {
+              setQuickFilter('')
+              apiRef.current?.setGridOption('quickFilterText', undefined)
+            }}>×</button>
+          )}
+        </div>
         <button className="grid-tool" title="显示 / 隐藏列" onClick={openColPanel}>≡ 列</button>
-        <button className="grid-tool" title="重置列宽 / 排序 / 显隐" onClick={() => apiRef.current?.resetColumnState()}>↺ 重置视图</button>
+        <button className="grid-tool" title="重置列宽 / 排序 / 显隐 / 过滤" onClick={resetView}>↺ 重置视图</button>
         {colPanelOpen && (
           <div className="grid-colpanel">
             <div className="grid-colpanel-title">列</div>
@@ -155,7 +191,14 @@ export function BaizeGrid<T>({ columnDefs, rowData, stateKey, height = 520, onRo
           theme={baizeTheme}
           columnDefs={columnDefs}
           rowData={rowData}
-          defaultColDef={{ sortable: true, resizable: true }}
+          defaultColDef={{
+            sortable: true,
+            resizable: true,
+            filter: true,
+            floatingFilter: true,
+            // 隐藏 floating 行漏斗按钮（窄列防挤）→ 表头 hover 漏斗按钮自动恢复，过滤菜单入口不丢
+            suppressFloatingFilterButton: true,
+          }}
           initialState={initialState}
           onStateUpdated={(e) => {
             // 状态变化（拖宽/排序/显隐/重排）300ms 防抖后落库
