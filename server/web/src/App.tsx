@@ -1,10 +1,12 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import type { ColDef } from 'ag-grid-community'
 import ConfigPage from './ConfigPage'
 import AgentDownload from './AgentDownload'
 import LoginPage from './LoginPage'
 import ChangePasswordPage from './ChangePasswordPage'
 import ChangePasswordModal from './ChangePasswordModal'
 import { API, fetchJSON, initAuth, setAuth, clearAuth, isMustChangePassword } from './api'
+import { BaizeGrid, SEV, formatTime, sevCell, linkCell, statusCell, timeFormatter, sevComparator } from './grid'
 import './config.css'
 
 interface Host {
@@ -33,23 +35,12 @@ type Route = { page: 'hosts' } | { page: 'alerts' } | { page: 'events'; host?: s
 
 // ── 工具 ──────────────────────────────────────────────
 
-function formatTime(ts: string): string {
-  const d = new Date(ts)
-  if (isNaN(d.getTime())) return ts || ''
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
-}
-
 // 系统状态连接格式转换：{local_ip, local_port, remote_ip, remote_port} → {local:"ip:port", remote:"ip:port"}
 // （状态数据连接字段是分开的 IP/端口，实时查询是拼接好的字符串，统一成展示结构）
 function convConn(c: any) {
   const local = `${c.local_ip || '0.0.0.0'}:${c.local_port}`
   const remote = c.remote_ip && c.remote_ip !== '0.0.0.0' ? `${c.remote_ip}:${c.remote_port}` : ''
   return { pid: c.pid, local, remote, state: c.state || '' }
-}
-
-const SEV: Record<string, string> = {
-  critical: '#fb7185', high: '#fbbf24', medium: '#fb923c', low: '#22d3ee', info: '#94a3b8',
 }
 
 function parseHash(): Route {
@@ -272,6 +263,57 @@ export default function App() {
 
   const host = route.page === 'host-detail' ? hosts.find(h => h.agent_id === route.agentId) : null
 
+  // ── 表格列定义（AG Grid；列宽/排序/显隐状态按 stateKey 持久化）──
+
+  const hostCols = useMemo<ColDef<Host>[]>(() => [
+    { headerName: '主机名', field: 'hostname', flex: 1.2, cellStyle: { fontWeight: 600 }, tooltipField: 'hostname' },
+    { headerName: '状态', colId: 'status', width: 110, valueGetter: p => (p.data!.revoked ? 2 : p.data!.is_online ? 1 : 0), cellRenderer: statusCell },
+    { headerName: 'OS', colId: 'os', flex: 1, valueGetter: p => `${p.data!.os_type} ${p.data!.os_version}` },
+    { headerName: '架构', field: 'arch', width: 90 },
+    { headerName: 'Agent', field: 'agent_version', width: 110 },
+    { headerName: '事件数', field: 'event_count', width: 95, valueFormatter: p => Number(p.value).toLocaleString() },
+    { headerName: 'IP', field: 'ips', width: 190, valueFormatter: p => (p.value || []).join(', ') },
+    { headerName: '最后活跃', field: 'last_seen', width: 165, valueFormatter: timeFormatter },
+  ], [])
+
+  const alertCols = useMemo<ColDef<Alert>[]>(() => [
+    { headerName: '严重度', field: 'severity', width: 110, cellRenderer: sevCell, comparator: sevComparator },
+    { headerName: '规则', field: 'rule_name', flex: 1.4, tooltipField: 'rule_name' },
+    { headerName: '主机', field: 'hostname', width: 140 },
+    { headerName: '类型', field: 'event_type', width: 130 },
+    { headerName: '时间', field: '@timestamp', width: 165, valueFormatter: timeFormatter, sort: 'desc' },
+  ], [])
+
+  const eventCols = useMemo<ColDef<EventItem>[]>(() => [
+    { headerName: '时间', field: '@timestamp', width: 165, valueFormatter: timeFormatter, sort: 'desc' },
+    { headerName: '主机', field: 'hostname', width: 140 },
+    { headerName: '类型', field: 'event_type', width: 150, valueFormatter: p => p.data!.event_type + (p.data!.event_action ? '/' + p.data!.event_action : '') },
+    { headerName: '摘要', field: 'summary', flex: 1, tooltipField: 'summary', cellClass: 'summary-cell' },
+    { headerName: '', colId: 'action', width: 64, sortable: false, resizable: false, cellRenderer: linkCell(setEventDetail) },
+  ], [])
+
+  const procCols = useMemo<ColDef<any>[]>(() => [
+    { headerName: 'PID', field: 'pid', width: 80 },
+    { headerName: '名称', field: 'name', flex: 1, tooltipField: 'name' },
+    { headerName: '路径', field: 'exe', flex: 2.4, tooltipField: 'exe', cellClass: 'summary-cell' },
+    { headerName: 'CPU%', field: 'cpu', width: 80, valueFormatter: p => (p.value != null ? Number(p.value).toFixed(1) : '-') },
+    { headerName: '内存', field: 'memory', width: 90, valueFormatter: p => (p.value != null ? (Number(p.value) / 1024).toFixed(0) + 'KB' : '-') },
+    { headerName: '', colId: 'action', width: 64, sortable: false, resizable: false, cellRenderer: linkCell(setProcDetail) },
+  ], [])
+
+  const tcpCols = useMemo<ColDef<any>[]>(() => [
+    { headerName: 'PID', field: 'pid', width: 80 },
+    { headerName: '本地', field: 'local', flex: 1, tooltipField: 'local' },
+    { headerName: '远程', field: 'remote', flex: 1, tooltipField: 'remote' },
+    { headerName: '状态', field: 'state', width: 110 },
+  ], [])
+
+  const udpCols = useMemo<ColDef<any>[]>(() => [
+    { headerName: 'PID', field: 'pid', width: 80 },
+    { headerName: '本地', field: 'local', flex: 1, tooltipField: 'local' },
+    { headerName: '状态', field: 'state', width: 110 },
+  ], [])
+
   // ── 判断当前应该渲染哪个页面 ──────────────────────────
 
   // 未登录 → 登录页
@@ -348,31 +390,14 @@ export default function App() {
             >
               📦 下载 Agent
             </button>
-            <div className="grid">
-            {hosts.map(h => (
-              <div key={h.agent_id} className="card" onClick={() => navigate('hosts/' + h.agent_id)} style={h.revoked ? { opacity: 0.55 } : undefined}>
-                <div className="card-header">
-                  <span className={`dot ${h.revoked ? 'gray' : (h.is_online ? 'green' : 'gray')}`} />
-                  <strong>{h.hostname}</strong>
-                  {h.revoked
-                    ? <span className="badge offline">已吊销</span>
-                    : <span className={`badge ${h.is_online ? 'online' : 'offline'}`}>{h.is_online ? '在线' : '离线'}</span>}
-                </div>
-                <div className="card-body">
-                  <div className="row"><span className="label">OS</span><span>{h.os_type} {h.os_version}</span></div>
-                  <div className="row"><span className="label">架构</span><span>{h.arch || '-'}</span></div>
-                  <div className="row"><span className="label">Agent</span><span className="mono">{h.agent_version || '-'}</span></div>
-                  <div className="row"><span className="label">事件</span><span>{h.event_count.toLocaleString()}</span></div>
-                  {h.ips && h.ips.length > 0 && (
-                    <div className="row"><span className="label">IP</span><span className="mono">{h.ips.join(', ')}</span></div>
-                  )}
-                  <div className="row"><span className="label">ID</span><span className="mono" style={{fontSize:'0.65rem'}}>{h.agent_id.slice(0,19)}...</span></div>
-                  <div className="ago" style={{marginTop:'0.3rem'}}>最后活跃: {formatTime(h.last_seen)}</div>
-                </div>
-              </div>
-            ))}
-            {hosts.length === 0 && <div className="empty">暂无在线主机</div>}
-            </div>
+            <BaizeGrid
+              columnDefs={hostCols}
+              rowData={hosts}
+              stateKey="baize.grid.hosts"
+              onRowClicked={e => navigate('hosts/' + e.data!.agent_id)}
+              rowClassRules={{ 'row-revoked': p => !!p.data?.revoked }}
+              emptyText="暂无在线主机"
+            />
           </>
         )}
 
@@ -427,46 +452,20 @@ export default function App() {
               {sysLoading ? <div className="loading">加载系统状态...</div> : (
               sysView ? (
                 <div>
-                  <div className="tabs" style={{marginBottom:'0.6rem'}}>
+                  <div className="tabs" style={{ marginBottom: '0.6rem' }}>
                     <button className={sysTab === 'procs' ? 'active' : ''} onClick={() => setSysTab('procs')}>进程 ({sysView.procs.length})</button>
                     <button className={sysTab === 'tcp' ? 'active' : ''} onClick={() => setSysTab('tcp')}>TCP 连接 ({sysView.tcp.length})</button>
                     <button className={sysTab === 'udp' ? 'active' : ''} onClick={() => setSysTab('udp')}>UDP 监听 ({sysView.udp.length})</button>
                   </div>
-                  <div className="scroll-table">
                   {sysTab === 'procs' && (
-                    <table className="table">
-                      <thead><tr><th>PID</th><th>名称</th><th>路径</th><th>CPU%</th><th>内存</th><th></th></tr></thead>
-                      <tbody>
-                        {sysView.procs.map((p,i) => (
-                          <tr key={i}><td className="mono">{p.pid}</td><td>{p.name}</td><td className="mono td-ellipsis" title={p.exe || ''}>{p.exe || '-'}</td><td>{p.cpu != null ? p.cpu.toFixed(1) : '-'}</td><td>{p.memory != null ? (p.memory / 1024).toFixed(0) + 'KB' : '-'}</td><td className="action"><span className="link" onClick={() => setProcDetail(p)}>详情</span></td></tr>
-                        ))}
-                        {sysView.procs.length === 0 && <tr><td colSpan={6} className="empty">无进程数据</td></tr>}
-                      </tbody>
-                    </table>
+                    <BaizeGrid columnDefs={procCols} rowData={sysView.procs} stateKey="baize.grid.procs" height={400} emptyText="无进程数据" />
                   )}
                   {sysTab === 'tcp' && (
-                    <table className="table">
-                      <thead><tr><th>PID</th><th>本地</th><th>远程</th><th>状态</th></tr></thead>
-                      <tbody>
-                        {sysView.tcp.map((c,i) => (
-                          <tr key={i}><td className="mono">{c.pid}</td><td className="mono">{c.local}</td><td className="mono">{c.remote || '-'}</td><td>{c.state}</td></tr>
-                        ))}
-                        {sysView.tcp.length === 0 && <tr><td colSpan={4} className="empty">无 TCP 连接</td></tr>}
-                      </tbody>
-                    </table>
+                    <BaizeGrid columnDefs={tcpCols} rowData={sysView.tcp} stateKey="baize.grid.tcp" height={400} emptyText="无 TCP 连接" />
                   )}
                   {sysTab === 'udp' && (
-                    <table className="table">
-                      <thead><tr><th>PID</th><th>本地</th><th>状态</th></tr></thead>
-                      <tbody>
-                        {sysView.udp.map((c,i) => (
-                          <tr key={i}><td className="mono">{c.pid}</td><td className="mono">{c.local}</td><td>{c.state}</td></tr>
-                        ))}
-                        {sysView.udp.length === 0 && <tr><td colSpan={3} className="empty">无 UDP 监听</td></tr>}
-                      </tbody>
-                    </table>
+                    <BaizeGrid columnDefs={udpCols} rowData={sysView.udp} stateKey="baize.grid.udp" height={400} emptyText="无 UDP 监听" />
                   )}
-                  </div>
                 </div>
               ) : (
                 <div className="empty">该主机暂无系统状态（Agent 未上线或版本过旧），可点击"刷新"获取当前状态</div>
@@ -484,23 +483,14 @@ export default function App() {
             <div className="filter-bar" style={{ justifyContent: 'flex-end' }}>
               <button onClick={() => setExportConfirm({ kind: 'alerts' })} className="btn" disabled={exporting}>{exporting ? '⏳ 导出中...' : '⬇ 导出'}</button>
             </div>
-          <table className="table">
-            <thead>
-              <tr><th>严重度</th><th>规则</th><th>主机</th><th>类型</th><th>时间</th></tr>
-            </thead>
-            <tbody>
-              {alerts.map(a => (
-                <tr key={a.alert_id} onClick={() => showAlertDetail(a.alert_id)} className="clickable">
-                  <td><span className="sev" style={{ color: SEV[a.severity] || '#94a3b8' }}>●</span> {a.severity}</td>
-                  <td>{a.rule_name}</td>
-                  <td>{a.hostname}</td>
-                  <td className="mono">{a.event_type}</td>
-                  <td className="ago">{formatTime(a['@timestamp'])}</td>
-                </tr>
-              ))}
-              {alerts.length === 0 && <tr><td colSpan={5} className="empty">暂无告警</td></tr>}
-            </tbody>
-          </table>
+            <BaizeGrid
+              columnDefs={alertCols}
+              rowData={alerts}
+              stateKey="baize.grid.alerts"
+              height={600}
+              onRowClicked={e => showAlertDetail(e.data!.alert_id)}
+              emptyText="暂无告警"
+            />
           </>
         )}
 
@@ -527,21 +517,13 @@ export default function App() {
               <button onClick={() => setExportConfirm({ kind: 'events' })} className="btn" disabled={exporting}>{exporting ? '⏳ 导出中...' : '⬇ 导出'}</button>
             </div>
             {loading ? <div className="loading">加载中...</div> : (
-            <table className="table">
-              <thead><tr><th>时间</th><th>主机</th><th>类型</th><th>摘要</th><th></th></tr></thead>
-              <tbody>
-                {events.map((e, i) => (
-                  <tr key={i}>
-                    <td className="ago">{formatTime(e['@timestamp'])}</td>
-                    <td>{e.hostname}</td>
-                    <td className="mono">{e.event_type}{e.event_action ? '/' + e.event_action : ''}</td>
-                    <td className="summary">{e.summary}</td>
-                    <td className="action"><span className="link" onClick={() => setEventDetail(e)}>详情</span></td>
-                  </tr>
-                ))}
-                {events.length === 0 && <tr><td colSpan={5} className="empty">暂无事件</td></tr>}
-              </tbody>
-            </table>
+              <BaizeGrid
+                columnDefs={eventCols}
+                rowData={events}
+                stateKey="baize.grid.events"
+                height={600}
+                emptyText="暂无事件"
+              />
             )}
           </>
         )}

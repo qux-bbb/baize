@@ -32,35 +32,50 @@ h1 { font-family: var(--font); font-size: 1.25rem; font-weight: 700; }
 .change-pwd-btn { color: #94a3b8 !important; border-color: #334155 !important; }
 .change-pwd-btn:hover { border-color: #fbbf24 !important; color: #fbbf24 !important; }
 
-/* Grid (hosts) */
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 1rem; }
-
-/* Card */
-.card {
-  background: var(--card); border: 1px solid var(--border); border-radius: 10px;
-  padding: 1rem; cursor: pointer; transition: border-color .15s;
-}
-.card:hover { border-color: var(--accent); }
-.card-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
-.card-body { font-size: 0.8rem; color: var(--muted); }
-.card-body .row { display: flex; gap: 0.4rem; padding: 0.15rem 0; }
-.card-body .label { color: #475569; min-width: 42px; flex-shrink: 0; }
-.dot { width: 8px; height: 8px; border-radius: 50%; }
+/* 状态指示（AG Grid cellRenderer 复用） */
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; vertical-align: middle; }
 .dot.green { background: #34d399; }
 .dot.gray { background: #888; }
-.card-header .badge { font-size: 0.65rem; padding: 1px 6px; border-radius: 8px; margin-left: 6px; }
+.badge { font-size: 0.65rem; padding: 1px 6px; border-radius: 8px; margin-left: 6px; }
 .badge.online { background: #d1fae5; color: #065f46; }
 .badge.offline { background: #e5e7eb; color: #6b7280; }
 .ago { font-size: 0.75rem; color: var(--muted); margin-top: 0.3rem; }
 
-/* Table */
-.table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-.table th { text-align: left; padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border); color: var(--muted); font-weight: 500; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
-.table td { padding: 0.5rem 0.8rem; border-bottom: 1px solid rgba(30, 41, 59, 0.5); }
-.table tr:hover td { background: rgba(34, 211, 238, 0.03); }
+/* AG Grid 表格（BaizeGrid 封装） */
 .mono { font-family: var(--font); font-size: 0.75rem; }
 .sev { font-size: 0.6rem; margin-right: 0.25rem; }
-.summary { max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.baize-grid-wrap { position: relative; }
+.baize-grid-wrap .ag-root-wrapper { border-radius: 8px; border: 1px solid var(--border); }
+/* 表头上方的视图工具条（常驻，不覆盖表格内容） */
+.grid-tools {
+  position: relative; display: flex; justify-content: flex-end; align-items: center;
+  gap: 6px; height: 30px; padding: 0 4px;
+}
+.grid-tool {
+  background: rgba(13, 20, 36, 0.88); border: 1px solid #334155; color: #94a3b8;
+  border-radius: 6px; padding: 2px 8px; font-size: 0.7rem; cursor: pointer;
+  font-family: var(--font);
+}
+.grid-tool:hover { color: var(--accent); border-color: var(--accent); }
+.grid-colpanel {
+  position: absolute; top: 30px; right: 4px; z-index: 7; min-width: 150px;
+  background: rgba(13, 20, 36, 0.97); border: 1px solid #334155; border-radius: 8px;
+  padding: 0.4rem 0.2rem; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+.grid-colpanel-title {
+  font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); padding: 0.2rem 0.7rem 0.4rem; border-bottom: 1px solid rgba(30,41,59,0.6);
+}
+.grid-colpanel-item {
+  display: flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.7rem;
+  font-size: 0.75rem; color: var(--text); cursor: pointer; font-family: var(--font);
+}
+.grid-colpanel-item:hover { background: rgba(34, 211, 238, 0.08); }
+.grid-colpanel-item input { accent-color: var(--accent); }
+.clickable-rows .ag-row { cursor: pointer; }
+.summary-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.baize-empty { color: var(--muted); font-size: 0.9rem; }
+.row-revoked { opacity: 0.55; }
 
 /* Filter bar */
 .filter-bar { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
@@ -77,12 +92,6 @@ h1 { font-family: var(--font); font-size: 1.25rem; font-weight: 700; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn:disabled:hover { background: rgba(34, 211, 238, 0.1); }
 .clickable { cursor: pointer; }
-.action { text-align: center; }
-.scroll-table { max-height: 400px; overflow-y: auto; display: block; }
-/* 固定表头：滚动时表头吸顶，背景不透明盖住内容 */
-.scroll-table thead th { position: sticky; top: 0; background: var(--card); z-index: 1; }
-/* 长文本截断：路径等超长列限宽 + 省略号，悬停 title 看完整 */
-.td-ellipsis { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .link { color: #60a5fa; cursor: pointer; }
 .link:hover { text-decoration: underline; }
 .back { cursor: pointer; color: var(--accent); margin-right: 0.3rem; font-size: 1.1rem; }

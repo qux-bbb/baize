@@ -5,7 +5,12 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      '/api': 'http://localhost:8080'
+      // 后端是 TLS 服务（自签证书），dev 代理必须用 https + secure:false
+      '/api': {
+        target: 'https://localhost:8080',
+        changeOrigin: true,
+        secure: false,
+      }
     }
   },
   build: {
