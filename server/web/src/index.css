@@ -46,6 +46,17 @@ h1 { font-family: var(--font); font-size: 1.25rem; font-weight: 700; }
 .sev { font-size: 0.6rem; margin-right: 0.25rem; }
 .baize-grid-wrap { position: relative; }
 .baize-grid-wrap .ag-root-wrapper { border-radius: 8px; border: 1px solid var(--border); }
+/* 拖宽手柄与列分隔线对齐：
+   ①热区右缘贴列线（right:0 不越线）——col-resize 光标（左右箭头）只在列线及左侧出现，
+     避免鼠标在列线右侧时"左箭头尖跑进列线右侧"的不对称观感；
+   ②视觉条中心精确落列线（热区左缘=列右-8px → left = 8px - 宽度/2）→ 2px 条骑在 1px 列线上。
+   ⚠️ resize 判定排除列线右边界（down@列线=no-op，down@列线左 1px=生效），有效拖拽区 = 热区-1px */
+.baize-grid-wrap .ag-header-cell-resize {
+  right: 0 !important;
+}
+.baize-grid-wrap .ag-header-cell-resize:after {
+  left: calc(8px - var(--ag-header-column-resize-handle-width) / 2) !important;
+}
 /* 表头上方的视图工具条（常驻，不覆盖表格内容） */
 .grid-tools {
   position: relative; display: flex; justify-content: flex-end; align-items: center;
