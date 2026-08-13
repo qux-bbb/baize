@@ -17,4 +17,4 @@ if %errorlevel% neq 0 (
     exit /b %errorlevel%
 )
 echo Starting server...
-baize-server.exe
+baize-server.exe -agent-binary ..\agent\target\release\baize-agent.exe
