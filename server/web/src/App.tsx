@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import type { ColDef } from 'ag-grid-community'
+import type { ColDef, ICellRendererParams } from 'ag-grid-community'
 import ConfigPage from './ConfigPage'
 import AgentDownload from './AgentDownload'
 import LoginPage from './LoginPage'
@@ -102,6 +102,11 @@ export default function App() {
   const [showChangePwd, setShowChangePwd] = useState(false)
   const [exportConfirm, setExportConfirm] = useState<{ kind: 'events' | 'alerts' } | null>(null)
   const [exporting, setExporting] = useState(false)
+  // 主机行操作菜单（⋯ 按钮 → 查看详情 / 移除 Agent）+ 移除确认
+  const [rowMenu, setRowMenu] = useState<{ agentId: string; hostname: string; x: number; y: number } | null>(null)
+  const [removeConfirm, setRemoveConfirm] = useState<{ agentId: string; hostname: string } | null>(null)
+  const [removing, setRemoving] = useState(false)
+  const [notice, setNotice] = useState('')
 
   // 认证事件监听
   useEffect(() => {
@@ -126,6 +131,13 @@ export default function App() {
     onHash()
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
+  }, [])
+
+  // 行操作菜单：点击页面其他位置关闭
+  useEffect(() => {
+    const close = () => setRowMenu(null)
+    window.addEventListener('click', close)
+    return () => window.removeEventListener('click', close)
   }, [])
 
   // 数据加载
@@ -261,6 +273,23 @@ export default function App() {
     setTimeout(() => setExporting(false), 1500)
   }
 
+  // 移除 Agent：删注册记录 → key 失效 → 在线连接被断（对标 Wazuh remove agent）
+  async function doRemoveAgent() {
+    if (!removeConfirm) return
+    setRemoving(true); setErr(''); setNotice('')
+    try {
+      await fetchJSON(`${API}/agents/${removeConfirm.agentId}`, { method: 'DELETE' })
+      setNotice(`已移除 ${removeConfirm.hostname}`)
+      setRemoveConfirm(null)
+      setTimeout(() => setNotice(''), 5000)
+      load() // 刷新主机列表（该主机从列表消失）
+    } catch (e: any) {
+      setErr('移除失败: ' + (e.message || e))
+    } finally {
+      setRemoving(false)
+    }
+  }
+
   const host = route.page === 'host-detail' ? hosts.find(h => h.agent_id === route.agentId) : null
 
   // ── 表格列定义（AG Grid；列宽/排序/显隐状态按 stateKey 持久化）──
@@ -274,6 +303,17 @@ export default function App() {
     { headerName: '事件数', field: 'event_count', width: 95, valueFormatter: p => Number(p.value).toLocaleString(), filter: 'agNumberColumnFilter' },
     { headerName: 'IP', field: 'ips', width: 190, valueFormatter: p => (p.value || []).join(', ') },
     { headerName: '最后活跃', field: 'last_seen', width: 165, valueFormatter: timeFormatter, filter: 'agDateColumnFilter', filterParams: dateFilterParams },
+    { headerName: '', colId: 'action', width: 80, sortable: false, resizable: false, filter: false, floatingFilter: false, pinned: 'right', cellRenderer: (p: ICellRendererParams) => (
+      <button
+        className="row-menu-btn"
+        title="操作"
+        onClick={(e) => {
+          e.stopPropagation()
+          const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+          setRowMenu({ agentId: p.data!.agent_id, hostname: p.data!.hostname, x: r.right - 132, y: r.bottom + 4 })
+        }}
+      >⋯</button>
+    ) },
   ], [])
 
   const alertCols = useMemo<ColDef<Alert>[]>(() => [
@@ -379,6 +419,7 @@ export default function App() {
 
       <main className="main">
         {err && <div className="error">{err}</div>}
+        {notice && <div className="notice">{notice}</div>}
         {loading && route.page !== 'events' && <div className="loading">加载中...</div>}
         {exporting && <div className="loading">⏳ 正在生成导出文件，请稍候…（最多 50,000 条，数据量大时可能需要一些时间）</div>}
 
@@ -394,7 +435,13 @@ export default function App() {
               columnDefs={hostCols}
               rowData={hosts}
               stateKey="baize.grid.hosts"
-              onRowClicked={e => navigate('hosts/' + e.data!.agent_id)}
+              onRowClicked={e => {
+                // 点行尾操作按钮（⋯）不跳详情页：React 合成事件 stopPropagation 拦不住
+                // AG Grid 的原生行点击监听（其监听器比 React 事件委托更靠内层），这里显式排除
+                const t = e.event && (e.event.target as HTMLElement)
+                if (t && t.closest('.row-menu-btn')) return
+                navigate('hosts/' + e.data!.agent_id)
+              }}
               rowClassRules={{ 'row-revoked': p => !!p.data?.revoked }}
               emptyText="暂无在线主机"
             />
@@ -580,6 +627,33 @@ export default function App() {
                   {!eventDetail.raw && <tr><td colSpan={2} className="empty">无详细数据</td></tr>}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* 主机行操作菜单（⋯ → 查看详情 / 移除 Agent） */}
+      {rowMenu && (
+        <div className="row-menu" style={{ left: rowMenu.x, top: rowMenu.y }} onClick={e => e.stopPropagation()}>
+          <div className="row-menu-item" onClick={() => { setRowMenu(null); navigate('hosts/' + rowMenu.agentId) }}>查看详情</div>
+          <div className="row-menu-item danger" onClick={() => { setRemoveConfirm({ agentId: rowMenu.agentId, hostname: rowMenu.hostname }); setRowMenu(null) }}>移除 Agent</div>
+        </div>
+      )}
+      {/* 移除 Agent 确认弹窗 */}
+      {removeConfirm && (
+        <div className="overlay" onClick={() => !removing && setRemoveConfirm(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '440px' }}>
+            <div className="modal-header">
+              <strong>移除 Agent</strong>
+              <button className="close" onClick={() => !removing && setRemoveConfirm(null)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="field"><label>主机</label><span>{removeConfirm.hostname}</span></div>
+              <div className="field"><label>Agent ID</label><span className="mono">{removeConfirm.agentId}</span></div>
+              <div className="field"><label>后果</label><span>移除后该 Agent 将无法连接 Server，需重新安装才能接入。此操作不可恢复。</span></div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', padding: '0 1rem 1rem' }}>
+              <button className="btn" onClick={() => setRemoveConfirm(null)} disabled={removing}>取消</button>
+              <button className="btn btn-danger" onClick={doRemoveAgent} disabled={removing}>{removing ? '移除中...' : '确认移除'}</button>
             </div>
           </div>
         </div>

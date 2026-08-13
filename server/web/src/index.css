@@ -214,6 +214,21 @@ h1 { font-family: var(--font); font-size: 1.25rem; font-weight: 700; }
 .loading, .empty, .error { padding: 2rem; text-align: center; color: var(--muted); font-size: 0.9rem; }
 .error { color: #fb7185; }
 
+.notice { padding: 0.5rem 1rem; text-align: center; color: #34d399; font-size: 0.85rem; background: rgba(52, 211, 153, 0.08); border: 1px solid rgba(52, 211, 153, 0.25); border-radius: 8px; margin-bottom: 0.8rem; }
+
+.btn-danger { background: rgba(251, 113, 133, 0.1); border: 1px solid #fb7185; color: #fb7185; }
+.btn-danger:hover:not(:disabled) { background: rgba(251, 113, 133, 0.2); }
+.btn-danger:disabled:hover { background: rgba(251, 113, 133, 0.1); }
+
+.row-menu-btn { background: none; border: none; color: #64748b; font-size: 1.15rem; cursor: pointer; padding: 0 4px; line-height: 1; }
+.row-menu-btn:hover { color: #fff; }
+
+.row-menu { position: fixed; z-index: 200; background: #131c31; border: 1px solid #1e293b; border-radius: 8px; padding: 0.25rem; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); min-width: 120px; }
+.row-menu-item { padding: 0.45rem 0.8rem; font-size: 0.8rem; cursor: pointer; border-radius: 6px; color: #cbd5e1; white-space: nowrap; }
+.row-menu-item:hover { background: rgba(34, 211, 238, 0.1); color: #fff; }
+.row-menu-item.danger { color: #fb7185; }
+.row-menu-item.danger:hover { background: rgba(251, 113, 133, 0.12); color: #fda4af; }
+
 /* Auth pages (login / change password) */
 .auth-page {
   min-height: 100vh;

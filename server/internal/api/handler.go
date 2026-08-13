@@ -175,21 +175,24 @@ func (h *Handler) AgentList(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"agents": agents})
 }
 
-// AgentDelete 吊销 Agent（删除注册记录 → key 立即失效；在线连接由心跳被拒后自行断开）
+// AgentDelete 移除 Agent（对标 Wazuh remove agent）：
+// 删注册记录（不存在视为已移除，幂等）+ 删主机资产文档 + 断开在线连接。
+// 幂等：Bleve 可能残留旧 host 文档（无对应注册记录），此时注册记录删除返回 false 不视为错误。
 func (h *Handler) AgentDelete(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("id")
 	if agentID == "" {
 		http.Error(w, "missing id", 400)
 		return
 	}
-	if !h.reg.DeleteAgent(agentID) {
-		http.Error(w, "agent 未注册", 404)
-		return
+	deleted := h.reg.DeleteAgent(agentID)
+	// 同步删除主机资产文档（Bleve type:host），主机从列表消失；事件历史不受影响
+	if err := h.store.DeleteHost(agentID); err != nil {
+		log.Printf("[API] 删除主机文档失败: %v", err)
 	}
 	// 立即从指令总线移除（主机列表在线状态马上清除）
 	h.cmdBus.Unregister(agentID)
-	log.Printf("[API] 已吊销 Agent: %s（可用有效 token 重新注册；想永久阻止请吊销 token）", agentID)
-	json.NewEncoder(w).Encode(map[string]string{"status": "revoked"})
+	log.Printf("[API] 已移除 Agent: %s（注册记录: %v；可用有效 token 重新注册）", agentID, deleted)
+	json.NewEncoder(w).Encode(map[string]string{"status": "removed"})
 }
 
 // ── 告警列表 ──────────────────────────────────────────────

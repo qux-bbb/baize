@@ -40,6 +40,12 @@ type Store struct {
 	hostMu       sync.Mutex
 	hostStates   map[string]*hostState
 	hostThrottle map[string]time.Time
+
+	// removedHosts 已移除 Agent 集合（持久化到 <data-dir>/removed_hosts.json）：
+	// 防 RebuildHosts 从残留事件索引重建已移除主机（否则移除后重启会"复活"）。
+	// 事件历史仍保留，只是不再生成/更新资产文档。
+	removedHosts map[string]bool
+	removedPath  string
 }
 
 // hostState 内存中的主机状态（写文档时落盘）
@@ -167,6 +173,8 @@ func New(path string) (*Store, error) {
 		index:        index,
 		hostStates:   make(map[string]*hostState),
 		hostThrottle: make(map[string]time.Time),
+		removedHosts: loadRemovedHosts(filepath.Join(dir, "removed_hosts.json")),
+		removedPath:  filepath.Join(dir, "removed_hosts.json"),
 	}, nil
 }
 
@@ -218,6 +226,46 @@ type HostDoc struct {
 	EventCount   uint64   `json:"event_count"`
 }
 
+// DeleteHost 删除主机资产文档（Agent 被移除时调用）：
+// 删除 Bleve 索引中的 host-{agentID} 文档，清理内存主机状态，
+// 并记入 removed_hosts.json（防 RebuildHosts 从残留事件索引重建"复活"）。
+func (s *Store) DeleteHost(agentID string) error {
+	if agentID == "" {
+		return nil
+	}
+	s.hostMu.Lock()
+	delete(s.hostStates, agentID)
+	delete(s.hostThrottle, agentID)
+	if !s.removedHosts[agentID] {
+		s.removedHosts[agentID] = true
+		if err := s.saveRemovedHosts(); err != nil {
+			log.Printf("[Bleve] removed_hosts 保存失败: %v", err)
+		}
+	}
+	s.hostMu.Unlock()
+	return s.index.Delete("host-" + agentID)
+}
+
+// saveRemovedHosts 持久化已移除 Agent 集合（<data-dir>/removed_hosts.json）
+func (s *Store) saveRemovedHosts() error {
+	data, err := json.MarshalIndent(s.removedHosts, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(s.removedPath, data, 0644)
+}
+
+// loadRemovedHosts 加载已移除 Agent 集合（文件不存在 = 空集合）
+func loadRemovedHosts(path string) map[string]bool {
+	m := make(map[string]bool)
+	if data, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(data, &m); err != nil {
+			log.Printf("[Bleve] removed_hosts.json 解析失败，按空集合处理: %v", err)
+		}
+	}
+	return m
+}
+
 // WriteHost 注册/心跳：写入（upsert）主机文档
 // 调用方：Heartbeat RPC（低频，30s/次），不走节流
 func (s *Store) WriteHost(info *pb.AgentInfo, lastSeen string) error {
@@ -228,6 +276,11 @@ func (s *Store) WriteHost(info *pb.AgentInfo, lastSeen string) error {
 
 	s.hostMu.Lock()
 	defer s.hostMu.Unlock()
+
+	// 已移除的 Agent 不再生成/更新资产文档（心跳写入路径）
+	if s.removedHosts[agentID] {
+		return nil
+	}
 
 	st := s.hostStates[agentID]
 	if st == nil {
@@ -266,6 +319,11 @@ func (s *Store) UpsertHostFromEvent(event *pb.Event) error {
 
 	s.hostMu.Lock()
 	defer s.hostMu.Unlock()
+
+	// 已移除的 Agent 不再生成/更新资产文档（事件流路径）
+	if s.removedHosts[agentID] {
+		return nil
+	}
 
 	st := s.hostStates[agentID]
 	if st == nil {
@@ -351,6 +409,10 @@ func (s *Store) RebuildHosts() (int, error) {
 	terms := f.Terms.Terms()
 	for _, t := range terms {
 		agentID := t.Term
+		// 已移除的主机不重建（事件历史保留在索引，但资产文档不再出现）
+		if s.removedHosts[agentID] {
+			continue
+		}
 		// 2. 查该 agent 的最新一条事件（静态字段 + last_seen）
 		q2 := bleve.NewQueryStringQuery(fmt.Sprintf(`type:event AND agent_id:"%s"`, agentID))
 		s2 := bleve.NewSearchRequest(q2)
