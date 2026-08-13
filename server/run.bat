@@ -9,5 +9,12 @@ if %errorlevel% neq 0 (
     exit /b %errorlevel%
 )
 cd ..
+echo Building server...
+go build -o baize-server.exe ./cmd/
+if %errorlevel% neq 0 (
+    echo Server build failed, check Go
+    pause
+    exit /b %errorlevel%
+)
 echo Starting server...
-go run ./cmd/
+baize-server.exe
