@@ -4,6 +4,7 @@ package api
 import (
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -102,7 +103,7 @@ func (h *Handler) Hosts(w http.ResponseWriter, r *http.Request) {
 	onlineIDs := h.cmdBus.AgentIDs()
 	hosts, err := h.store.SearchHosts(onlineIDs)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		writeErr(w, 500, err.Error())
 		return
 	}
 	if hosts == nil {
@@ -122,18 +123,18 @@ func (h *Handler) EnrollmentTokens(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "DELETE" {
 		id := r.PathValue("id")
 		if id == "" {
-			http.Error(w, "missing id", 400)
+			writeErr(w, 400, "missing id")
 			return
 		}
 		if !h.reg.RevokeToken(id) {
-			http.Error(w, "token 不存在", 404)
+			writeErr(w, 404, "token 不存在")
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]string{"status": "revoked"})
 		return
 	}
 	if r.Method != "POST" {
-		http.Error(w, "method not allowed", 405)
+		writeErr(w, 405, "method not allowed")
 		return
 	}
 	var req struct {
@@ -153,12 +154,12 @@ func (h *Handler) EnrollmentTokens(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) EnrollmentTokenPlain(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
-		http.Error(w, "missing id", 400)
+		writeErr(w, 400, "missing id")
 		return
 	}
 	plain, ok := h.reg.GetTokenPlain(id)
 	if !ok {
-		http.Error(w, "token 不存在或为旧版仅存哈希（无法还原明文，可吊销重建）", 404)
+		writeErr(w, 404, "token 不存在或为旧版仅存哈希（无法还原明文，可吊销重建）")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"token": plain})
@@ -181,7 +182,7 @@ func (h *Handler) AgentList(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) AgentDelete(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("id")
 	if agentID == "" {
-		http.Error(w, "missing id", 400)
+		writeErr(w, 400, "missing id")
 		return
 	}
 	deleted := h.reg.DeleteAgent(agentID)
@@ -200,7 +201,7 @@ func (h *Handler) AgentDelete(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Alerts(w http.ResponseWriter, r *http.Request) {
 	alerts, total, err := h.store.SearchAlerts(50)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		writeErr(w, 500, err.Error())
 		return
 	}
 	if alerts == nil {
@@ -214,13 +215,18 @@ func (h *Handler) Alerts(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) AlertDetail(w http.ResponseWriter, r *http.Request) {
 	alertID := r.URL.Query().Get("alert_id")
 	if alertID == "" {
-		http.Error(w, "missing alert_id", 400)
+		writeErr(w, 400, "missing alert_id")
 		return
 	}
 
 	doc, err := h.store.GetAlert(alertID)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		// 告警不存在 → 404（客户端语义）；其他存储错误 → 500
+		if errors.Is(err, store.ErrAlertNotFound) {
+			writeErr(w, http.StatusNotFound, "告警不存在")
+		} else {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 	json.NewEncoder(w).Encode(doc)
@@ -235,7 +241,7 @@ func (h *Handler) ConfigFileWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != "POST" {
-		http.Error(w, "method not allowed", 405)
+		writeErr(w, 405, "method not allowed")
 		return
 	}
 	var req struct {
@@ -243,7 +249,7 @@ func (h *Handler) ConfigFileWatch(w http.ResponseWriter, r *http.Request) {
 		Dirs    []string `json:"dirs"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid json", 400)
+		writeErr(w, 400, "invalid json")
 		return
 	}
 	if req.AgentID == "" {
@@ -284,7 +290,7 @@ func (h *Handler) Events(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	events, err := h.store.SearchEvents(hostname, q, eventsQuerySize)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		writeErr(w, 500, err.Error())
 		return
 	}
 	if events == nil {
@@ -305,7 +311,7 @@ func (h *Handler) ConfigEventTypes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method != "POST" {
-		http.Error(w, "method not allowed", 405)
+		writeErr(w, 405, "method not allowed")
 		return
 	}
 
@@ -314,7 +320,7 @@ func (h *Handler) ConfigEventTypes(w http.ResponseWriter, r *http.Request) {
 		Categories map[string]bool `json:"categories"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid json", 400)
+		writeErr(w, 400, "invalid json")
 		return
 	}
 
@@ -346,7 +352,7 @@ func (h *Handler) ExportEvents(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	rows, err := h.store.SearchEventsRaw(hostname, q, exportLimit)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		writeErr(w, 500, err.Error())
 		return
 	}
 	headers := []string{"@timestamp", "hostname", "agent_id", "os_type", "event_type", "event_action",
@@ -363,7 +369,7 @@ func (h *Handler) ExportEvents(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ExportAlerts(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.store.SearchAlertsRaw(exportLimit)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		writeErr(w, 500, err.Error())
 		return
 	}
 	headers := []string{"@timestamp", "alert_id", "rule_id", "rule_name", "severity",
@@ -422,16 +428,16 @@ func csvVal(fields map[string]interface{}, key string) string {
 func (h *Handler) SystemState(w http.ResponseWriter, r *http.Request) {
 	agentID := r.URL.Query().Get("agent_id")
 	if agentID == "" {
-		http.Error(w, "missing agent_id", 400)
+		writeErr(w, 400, "missing agent_id")
 		return
 	}
 	doc, err := h.store.GetSystemState(agentID)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		writeErr(w, 500, err.Error())
 		return
 	}
 	if doc == nil {
-		http.Error(w, "该主机暂无系统状态", 404)
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "该主机暂无系统状态"})
 		return
 	}
 
@@ -456,12 +462,12 @@ func (h *Handler) SystemState(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) SystemInfo(w http.ResponseWriter, r *http.Request) {
 	agentID := r.URL.Query().Get("agent_id")
 	if agentID == "" {
-		http.Error(w, "missing agent_id", 400)
+		writeErr(w, 400, "missing agent_id")
 		return
 	}
 	jsonStr, err := h.cmdBus.QuerySystemInfo(agentID)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		writeErr(w, 500, err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

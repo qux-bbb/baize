@@ -410,7 +410,9 @@ func main() {
 		mux.HandleFunc("GET /api/cmd/isolate", func(w http.ResponseWriter, r *http.Request) {
 			agentID := r.URL.Query().Get("agent_id")
 			if agentID == "" {
-				http.Error(w, "missing agent_id", 400)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(400)
+				json.NewEncoder(w).Encode(map[string]string{"error": "missing agent_id"})
 				return
 			}
 			cmdBus.IsolateAgent(agentID)

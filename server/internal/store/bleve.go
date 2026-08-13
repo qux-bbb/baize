@@ -5,6 +5,7 @@ package store
 import (
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -28,6 +29,9 @@ const (
 	hostType        = "host"
 	systemStateType = "system_state"
 )
+
+// ErrAlertNotFound 告警文档不存在（API 层据此返回 404 而非 500）
+var ErrAlertNotFound = errors.New("告警不存在")
 
 // hostUpdateInterval 事件流更新 host 文档的节流间隔（避免事件密集时写放大）
 const hostUpdateInterval = 10 * time.Second
@@ -760,7 +764,7 @@ func (s *Store) GetAlert(alertID string) (map[string]interface{}, error) {
 		return nil, err
 	}
 	if len(result.Hits) == 0 {
-		return nil, fmt.Errorf("告警 %s 不存在", alertID)
+		return nil, fmt.Errorf("%w: 告警 %s 不存在", ErrAlertNotFound, alertID)
 	}
 	return result.Hits[0].Fields, nil
 }

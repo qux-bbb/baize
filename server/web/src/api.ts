@@ -72,6 +72,15 @@ export async function fetchJSON<T>(url: string, options?: RequestInit): Promise<
     throw new Error(errMsg)
   }
   if (r.status === 204) return undefined as T
+  // 4xx/5xx：解析错误消息并抛出（错误响应约定为 {"error":"..."}，调用方 catch 处理）
+  if (r.status >= 400) {
+    let msg = `HTTP ${r.status}`
+    try {
+      const d = await r.json()
+      if (d && typeof d.error === 'string' && d.error) msg = d.error
+    } catch { /* 非 JSON 错误体（如 http.Error 纯文本），保留 HTTP 状态码 */ }
+    throw new Error(msg)
+  }
   return r.json()
 }
 

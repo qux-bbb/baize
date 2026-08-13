@@ -109,3 +109,8 @@ func writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
 }
+
+// writeErr 统一错误响应（JSON）：{"error": "..."}，前端 fetchJSON 解析 error 字段抛出
+func writeErr(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg})
+}
