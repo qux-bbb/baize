@@ -255,13 +255,22 @@ curl -sk https://127.0.0.1:8080/api/health
 journalctl -u baize-server -n 30     # 首次密码（脚本已自动打印）
 ```
 
-**卸载**：
+**卸载**（`install_server.sh` 会把卸载脚本一并装到 `/opt/baize/`，卸载入口随服务常驻，**无需保留发布包目录**；默认**保留数据目录**，`--purge` 才彻底删除）：
 
 ```bash
-systemctl disable --now baize-server
-rm -rf /opt/baize /etc/systemd/system/baize-server.service
-systemctl daemon-reload
+sudo /opt/baize/uninstall_server.sh            # 交互确认，保留数据
+sudo /opt/baize/uninstall_server.sh --purge    # 彻底卸载（连同数据目录、运行用户 baize）
+sudo /opt/baize/uninstall_server.sh --yes      # 跳过交互确认（自动化场景）
 ```
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `--purge` | 关 | 同时删除数据目录与运行用户 baize（不可恢复） |
+| `--yes` / `-y` | 关 | 跳过交互确认 |
+| `--data-dir` | /opt/baize/data | 数据目录（须与安装时一致，默认保留） |
+| `--agent-dir` | /opt/baize/agent-files | Agent 分发目录 |
+
+**脚本自动完成**：停止并禁用服务（轮询确认停止）→ 删除 systemd 单元并 daemon-reload → 删除程序文件与 Agent 分发文件（保留数据目录，除非 `--purge`）→ 打印防火墙清理提示。幂等：重复执行或未安装时提示后退出，无副作用。
 
 **发布包构建**（本地打包）：
 

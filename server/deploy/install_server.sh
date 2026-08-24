@@ -132,6 +132,10 @@ if [[ -f "$SCRIPT_DIR/baize-agent.msi" ]]; then
   cp -f "$SCRIPT_DIR/baize-agent.msi" "$AGENT_DIR/"
   echo "      baize-agent.msi → $AGENT_DIR/"
 fi
+# 卸载脚本随装落盘（卸载入口随服务常驻，不依赖发布包目录）
+cp -f "$SCRIPT_DIR/uninstall_server.sh" "$INSTALL_DIR/uninstall_server.sh"
+chmod +x "$INSTALL_DIR/uninstall_server.sh"
+echo "      uninstall_server.sh → $INSTALL_DIR/uninstall_server.sh"
 
 # [4/7] 生成 systemd 单元（参数已填充，无需手改）
 echo "[4/7] 生成 systemd 单元..."
@@ -219,5 +223,5 @@ echo "  日志跟踪:   journalctl -u $SERVICE_NAME -f"
 echo "  防火墙（若启用）:"
 echo "    firewall-cmd --permanent --add-port=$PORT/tcp --add-port=$HTTP_PORT/tcp && firewall-cmd --reload"
 echo "    或 iptables 放行 $PORT/$HTTP_PORT 入站"
-echo "  卸载:       systemctl disable --now $SERVICE_NAME && rm -rf $INSTALL_DIR /etc/systemd/system/$SERVICE_NAME.service && systemctl daemon-reload"
+echo "  卸载:       sudo $INSTALL_DIR/uninstall_server.sh（保留数据）或加 --purge（彻底删除）"
 echo "══════════════════════════════════════════════════"

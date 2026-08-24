@@ -47,6 +47,7 @@ PKG_LINUX="$RELEASE/pkg-linux/baize-server-$VERSION-linux-amd64"
 mkdir -p "$PKG_LINUX"
 cp "$RELEASE/baize-server" "$PKG_LINUX/"
 cp "$ROOT/deploy/install_server.sh" "$PKG_LINUX/"
+cp "$ROOT/deploy/uninstall_server.sh" "$PKG_LINUX/"
 cp "$ROOT/deploy/README.md" "$PKG_LINUX/"
 # 附带 baize-agent.exe（release）：install_server.sh [3/7] 自动拷到 agent-files → Server zip 下载即用（零手动）
 # 注意：Windows git-bash 下 `[[ -f "D:/..." ]]` 不认盘符路径，用相对路径判断（[1/4] 已 cd $ROOT）
@@ -58,7 +59,7 @@ else
   echo "[错误] 未找到 baize-agent.exe（$AGENT_EXE），终止发布"
   exit 1
 fi
-chmod +x "$PKG_LINUX/install_server.sh"
+chmod +x "$PKG_LINUX/install_server.sh" "$PKG_LINUX/uninstall_server.sh"
 # --mode=755 必须加：Windows 交叉编译产物在 NTFS 上无 POSIX 执行位，
 # MSYS 的 chmod +x 对无扩展名文件（baize-server）无效，tar --mode 直接设归档权限
 tar czf "$RELEASE/baize-server-$VERSION-linux-amd64.tar.gz" --mode=755 -C "$RELEASE/pkg-linux" .
@@ -142,6 +143,9 @@ echo "[6/4] 校验与校验和..."
 tar tzf "$RELEASE/baize-server-$VERSION-linux-amd64.tar.gz" \
   | grep -q "baize-server-$VERSION-linux-amd64/install_server.sh" \
   || { echo "[错误] tar.gz 缺 install_server.sh"; exit 1; }
+tar tzf "$RELEASE/baize-server-$VERSION-linux-amd64.tar.gz" \
+  | grep -q "baize-server-$VERSION-linux-amd64/uninstall_server.sh" \
+  || { echo "[错误] tar.gz 缺 uninstall_server.sh"; exit 1; }
 (cd "$RELEASE" && "$PYTHON_CMD" -m zipfile -l "baize-server-$VERSION-windows-amd64.zip") \
   | grep -q "baize-server.exe" \
   || { echo "[错误] zip 缺 baize-server.exe"; exit 1; }
