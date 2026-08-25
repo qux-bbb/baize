@@ -10,7 +10,9 @@ Baize 是一个轻量终端安全检测系统：Rust Agent 采集 Windows 进程
 
 ### ① 部署 Server（Linux 一键安装，约 5 分钟）
 
-发布包在 `server/release/`（`build_release.sh` 构建，内含 Server 二进制 + Agent 分发文件 + 安装脚本）。
+> 发布包在 `server/release/`（`build_release.sh` 构建，内含 Server 二进制 + Agent 分发文件 + 安装脚本）。
+>
+> 已发布到 GitHub 时也可一条命令装：`curl -fsSL https://raw.githubusercontent.com/qux-bbb/baize/main/install.sh | sudo bash`，脚本自动拉 latest + 校验 + 完整安装。
 
 ```bash
 tar xzf baize-server-<版本>-linux-amd64.tar.gz

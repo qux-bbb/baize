@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# ============================================================
+# Baize (白泽) Server 远程安装脚本 — GitHub Release 源
+#
+# 用法（纯 URL，零参数）:
+#   curl -fsSL https://raw.githubusercontent.com/<owner>/baize/main/install.sh | sudo bash
+#
+# 可选环境变量:
+#   BAIZE_PUBLIC_ADDR      Server 局域网地址（证书 SAN + Agent 连接地址）。
+#                          给了免交互；不给则交给 install_server.sh 自动检测选 IP
+#   BAIZE_VERSION          版本覆盖（默认从 GitHub latest release 自动探测）
+#   BAIZE_OFFLINE_TARBALL  本地已有 tar.gz 时跳过下载（离线/内网现场）
+#
+# 流程: 探测版本 → 下载 tar.gz + SHA256SUMS → 校验 → mktemp 解压
+#       → 调解压目录里的 install_server.sh → 安装完成
+#
+# 前提: 目标机 Linux + root + curl + tar + sha256sum
+# ============================================================
+set -euo pipefail
+
+if [[ $EUID -ne 0 ]]; then
+  echo "[错误] Baize 需要 root 权限，请用 sudo 执行（curl ... | sudo bash）"
+  exit 1
+fi
+
+# ---- 常量（建 repo / 发布时确认真实 owner/repo 后更新默认值）----
+REPO="${BAIZE_REPO:-qux-bbb/baize}"
+VERSION="${BAIZE_VERSION:-}"
+GH_API="https://api.github.com/repos/$REPO"
+GH_DL="https://github.com/$REPO/releases/download"
+
+# ---- 版本解析：BAIZE_VERSION 优先，否则探测 latest release ----
+if [[ -z "$VERSION" ]]; then
+  echo "❯ 探测最新 release 版本..."
+  TAG=""
+  # 首选 api.github.com（拿 tag_name）；失败回退到 releases/latest 的 Location 跳转
+  # （后者不占 api 配额，但同样可靠）
+  TAG="$(curl -fsSL "$GH_API/releases/latest" 2>/dev/null \
+      | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1 || true)"
+  if [[ -z "$TAG" || "$TAG" == *'/releases/tag/'* ]]; then
+    TAG="$(curl -fsLI -o /dev/null -w '%{url_effective}' "$GH_API/releases/latest" 2>/dev/null \
+      | sed -n 's|.*/releases/tag/||p' || true)"
+  fi
+  [[ -n "$TAG" ]] || { echo "[错误] 无法探测 release 版本（网络 / repo 可见性 / BAIZE_REPO 是否正确）"; exit 1; }
+  VERSION="${TAG#v}"
+fi
+echo "  版本: $VERSION"
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+ASSET="baize-server-$VERSION-linux-amd64.tar.gz"
+TARBALL="$TMP/$ASSET"
+
+# ---- 获取发布包（离线包 或 下载+校验）----
+if [[ -n "${BAIZE_OFFLINE_TARBALL:-}" ]]; then
+  [[ -f "$BAIZE_OFFLINE_TARBALL" ]] || { echo "[错误] 离线包不存在: $BAIZE_OFFLINE_TARBALL"; exit 1; }
+  cp "$BAIZE_OFFLINE_TARBALL" "$TARBALL"
+  echo "  使用离线包: $BAIZE_OFFLINE_TARBALL"
+else
+  echo "❯ 下载 $GH_DL/v$VERSION/$ASSET"
+  curl -fsSL -o "$TARBALL" "$GH_DL/v$VERSION/$ASSET" \
+    || { echo "[错误] 下载失败（检查版本 / 网络 / BAIZE_REPO）"; exit 1; }
+  if curl -fsSL -o "$TMP/SHA256SUMS.txt" "$GH_DL/v$VERSION/SHA256SUMS.txt" 2>/dev/null; then
+    (cd "$TMP" && sha256sum -c --ignore-missing SHA256SUMS.txt) \
+      || { echo "[错误] SHA256 校验失败，发布包疑似损坏或被篡改"; exit 1; }
+    echo "  SHA256 校验通过 ✔"
+  else
+    echo "[警告] SHA256SUMS 不可用，跳过校验"
+  fi
+fi
+
+# ---- 解压 ----
+echo "❯ 解压..."
+tar xzf "$TARBALL" -C "$TMP"
+PKG_DIR="$(find "$TMP" -maxdepth 1 -type d -name 'baize-server-*' | head -1)"
+[[ -n "$PKG_DIR" ]] || { echo "[错误] 解压后未找到 baize-server 包目录"; exit 1; }
+
+# ---- 调 install_server.sh（地址参数透传）----
+ARGS=()
+[[ -n "${BAIZE_PUBLIC_ADDR:-}" ]] && ARGS+=(--public-addr "$BAIZE_PUBLIC_ADDR")
+echo "❯ 执行安装（${ARGS[*]:-未指定地址→交给 install_server.sh 自动检测}）..."
+"$PKG_DIR/install_server.sh" "${ARGS[@]}"
+
+echo ""
+echo "═══════════════════════════════════════"
+echo " Baize (白泽) Server 由 GitHub Release 安装完成"
+echo " 后续版本升级: 重新执行同一条 curl | sudo bash 命令即可"
+echo "═══════════════════════════════════════"

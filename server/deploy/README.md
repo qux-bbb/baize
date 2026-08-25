@@ -22,6 +22,27 @@
 
 ---
 
+## ⚡ Server 一键安装（GitHub Release，Linux，约 1 分钟）
+
+> 若发布包已发布到 GitHub（`build_release.sh` 加 `BAIZE_RELEASE=1`），目标 Linux 机器可一条命令装完：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/qux-bbb/baize/main/install.sh | sudo bash
+```
+
+- 脚本自动：探测 latest release → 下载 tar.gz → SHA256 校验 → 解压 → 调 `install_server.sh` 完成安装
+- 指定 Server 局域网地址（免交互，证书 SAN + Agent 连接地址）：
+
+  ```bash
+  BAIZE_PUBLIC_ADDR=192.168.1.10 curl -fsSL https://raw.githubusercontent.com/qux-bbb/baize/main/install.sh | sudo bash
+  ```
+
+- 不指定地址则 `install_server.sh` 自动检测本机 IP 供选择（多一次交互）
+- 可选：`BAIZE_VERSION`（指定版本）、`BAIZE_OFFLINE_TARBALL`（本地包，离线现场）
+- 前提：目标机可访问 `github.com`（raw + release 下载）
+
+---
+
 ## 一、Server 部署（Windows，约 10 分钟）
 
 **1. 编译 Server**（开发机，已有 Go 1.22+）：

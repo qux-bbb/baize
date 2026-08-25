@@ -16,6 +16,7 @@
 set -euo pipefail
 
 VERSION="${1:-0.1.0}"
+REPO="${BAIZE_REPO:-qux-bbb/baize}"   # GitHub 发布仓库（GitHub Release 源安装用；建 repo / 发布时确认真实值后更新）
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 RELEASE="$ROOT/release"
@@ -155,6 +156,23 @@ if [[ -f "$AGENT_EXE" ]]; then
     || { echo "[错误] Agent zip 缺 baize-agent.exe"; exit 1; }
 fi
 (cd "$RELEASE" && sha256sum baize-server-$VERSION-* baize-agent-$VERSION-* > SHA256SUMS.txt)
+
+# [7/4] 发布到 GitHub Release（可选：BAIZE_RELEASE=1 触发，默认仅构建不发布）
+#    prefix: gh 已认证（gh auth login），且 repo 已存在（gh repo create）
+if [[ "${BAIZE_RELEASE:-0}" == "1" ]]; then
+  echo "[7/4] 发布到 GitHub Release v$VERSION -> $REPO ..."
+  command -v gh >/dev/null 2>&1 || { echo "[错误] 发布需要 gh CLI（winget install GitHub.cli 后 gh auth login）"; exit 1; }
+  gh release create "v$VERSION" \
+    "$RELEASE/baize-server-$VERSION-linux-amd64.tar.gz" \
+    "$RELEASE/baize-server-$VERSION-windows-amd64.zip" \
+    "$RELEASE/baize-agent-$VERSION-windows-amd64.zip" \
+    "$RELEASE/SHA256SUMS.txt" \
+    --repo "$REPO" \
+    --title "Baize $VERSION" \
+    --generate-notes
+  echo "      已发布：https://github.com/$REPO/releases/tag/v$VERSION"
+fi
+
 rm -rf "$RELEASE/pkg-linux" "$RELEASE/pkg-win" "$RELEASE/pkg-agent"
 
 echo ""
