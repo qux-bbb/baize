@@ -2,10 +2,13 @@
 # ============================================================
 # Baize (白泽) Server 远程安装脚本 — GitHub Release 源
 #
-# 用法（纯 URL，零参数）:
-#   curl -fsSL https://raw.githubusercontent.com/<owner>/baize/main/install.sh | sudo bash
+# 用法:
+#   纯 URL（未指定地址；脚本走到 install_server.sh 自动检测/交互选 IP）:
+#     curl -fsSL https://raw.githubusercontent.com/qux-bbb/baize/main/install.sh | sudo bash
+#   带地址/端口（bash -s -- 位置参数，免交互）:
+#     curl -fsSL https://raw.githubusercontent.com/qux-bbb/baize/main/install.sh | sudo bash -s -- --public-addr <IP> [--port 50051] [--http-port 8080]
 #
-# 可选环境变量:
+# 可选环境变量（仅"非 sudo 已 export"场景生效；sudo 默认 env_reset 会清掉，故优先用 bash -s --）:
 #   BAIZE_PUBLIC_ADDR      Server 局域网地址（证书 SAN + Agent 连接地址）。
 #                          给了免交互；不给则交给 install_server.sh 自动检测选 IP
 #   BAIZE_VERSION          版本覆盖（默认从 GitHub latest release 自动探测）
