@@ -303,4 +303,16 @@ cd server
 ./deploy/build_release.sh            # 产出 release/ 下 tar.gz + zip + SHA256SUMS
 ```
 
+**发布到 GitHub**（完整两步）：
+
+```bash
+cd server
+./deploy/build_release.sh 0.1.x      # ① 构建 + 上传 Release 资产（BAIZE_RELEASE=1 触发发布段）
+./deploy/publish_repo.sh --yes       # ② 推送 install.sh + README + description 到发布仓库 main
+```
+
+发布仓库（`qux-bbb/baize`）只放 install.sh + 精简 README + Release 资产，源码私有不入仓库。
+其 README/description 有**单一来源**（`deploy/publish/`，`install.sh` 源为 `deploy/install.sh`）：
+只改那一处，再跑 `./deploy/publish_repo.sh` 即可同步，避免文案漂移。
+
 **重复执行**：脚本幂等——覆盖 systemd 配置并重启服务，以最新参数为准。
