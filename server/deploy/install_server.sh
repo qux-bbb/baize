@@ -64,13 +64,21 @@ select_public_addr() {
   fi
   if [[ ${#ips[@]} -eq 0 ]]; then
     echo "未检测到本机 IP，请手动输入 Server 地址（Agent 可访问的 IP 或域名）:"
-    read -r PUBLIC_ADDR
+    # curl|bash 管道下 stdin 被占用（是管道非终端），必须显式从控制终端读；
+    # 无终端（如 CI/非交互）则报错引导用户改用参数/环境变量，避免静默失败
+    read -r PUBLIC_ADDR < /dev/tty 2>/dev/null || {
+      echo "[错误] 无法从终端读取输入。请指定 --public-addr <地址>（或环境变量 BAIZE_PUBLIC_ADDR=<地址>）后重跑。" >&2
+      exit 1
+    }
   else
     echo "检测到本机 IP，请选择（输入序号），或直接输入 IP/域名:"
     for i in "${!ips[@]}"; do
       echo "  $((i+1))) ${ips[$i]}  (${names[$i]})"
     done
-    read -r -p "选择/输入: " choice
+    read -r -p "选择/输入: " choice < /dev/tty 2>/dev/null || {
+      echo "[错误] 无法从终端读取输入。请指定 --public-addr <地址>（或环境变量 BAIZE_PUBLIC_ADDR=<地址>）后重跑。" >&2
+      exit 1
+    }
     if [[ "$choice" =~ ^[0-9]+$ ]]; then
       if (( choice >= 1 && choice <= ${#ips[@]} )); then
         PUBLIC_ADDR="${ips[$((choice-1))]}"
