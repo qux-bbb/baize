@@ -2,10 +2,13 @@
 # ============================================================
 # Baize (白泽) Server 远程安装脚本 — GitHub Release 源
 #
-# 用法（纯 URL，零参数）:
-#   curl -fsSL https://raw.githubusercontent.com/<owner>/baize/main/install.sh | sudo bash
+# 用法:
+#   纯 URL（未指定地址；脚本走到 install_server.sh 自动检测/交互选 IP）:
+#     curl -fsSL https://raw.githubusercontent.com/qux-bbb/baize/main/install.sh | sudo bash
+#   带地址/端口（bash -s -- 位置参数，免交互）:
+#     curl -fsSL https://raw.githubusercontent.com/qux-bbb/baize/main/install.sh | sudo bash -s -- --public-addr <IP> [--port 50051] [--http-port 8080]
 #
-# 可选环境变量:
+# 可选环境变量（仅"非 sudo 已 export"场景生效；sudo 默认 env_reset 会清掉，故优先用 bash -s --）:
 #   BAIZE_PUBLIC_ADDR      Server 局域网地址（证书 SAN + Agent 连接地址）。
 #                          给了免交互；不给则交给 install_server.sh 自动检测选 IP
 #   BAIZE_VERSION          版本覆盖（默认从 GitHub latest release 自动探测）
@@ -22,6 +25,20 @@ if [[ $EUID -ne 0 ]]; then
   echo "[错误] Baize 需要 root 权限，请用 sudo 执行（curl ... | sudo bash）"
   exit 1
 fi
+
+# ---- 解析命令行位置参数（curl | sudo bash -s -- --public-addr ...）----
+# 关键：sudo 默认 env_reset 会清空自定义环境变量（BAIZE_* 在 sudo 下传不进去），
+#       而位置参数 $@ 不受其影响。因此地址/端口优先走 bash -s -- 的实参；
+#       BAIZE_* 环境变量仅作为"非 sudo / 已 export"场景的替代。
+declare -a EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --public-addr) BAIZE_PUBLIC_ADDR="${2:-}"; shift 2 ;;
+    --port)        EXTRA_ARGS+=(--port "${2:-}"); shift 2 ;;
+    --http-port)   EXTRA_ARGS+=(--http-port "${2:-}"); shift 2 ;;
+    *) echo "[错误] 未知参数: $1（支持: --public-addr --port --http-port）"; exit 1 ;;
+  esac
+done
 
 # ---- 常量（建 repo / 发布时确认真实 owner/repo 后更新默认值）----
 REPO="${BAIZE_REPO:-qux-bbb/baize}"
@@ -76,11 +93,16 @@ tar xzf "$TARBALL" -C "$TMP"
 PKG_DIR="$(find "$TMP" -maxdepth 1 -type d -name 'baize-server-*' | head -1)"
 [[ -n "$PKG_DIR" ]] || { echo "[错误] 解压后未找到 baize-server 包目录"; exit 1; }
 
-# ---- 调 install_server.sh（地址参数透传）----
-ARGS=()
-[[ -n "${BAIZE_PUBLIC_ADDR:-}" ]] && ARGS+=(--public-addr "$BAIZE_PUBLIC_ADDR")
-echo "❯ 执行安装（${ARGS[*]:-未指定地址→交给 install_server.sh 自动检测}）..."
-"$PKG_DIR/install_server.sh" "${ARGS[@]}"
+# ---- 调 install_server.sh（地址/端口透传）----
+SERVER_ARGS=()
+[[ -n "${BAIZE_PUBLIC_ADDR:-}" ]] && SERVER_ARGS+=(--public-addr "$BAIZE_PUBLIC_ADDR")
+SERVER_ARGS+=( "${EXTRA_ARGS[@]}" )
+if [[ ${#SERVER_ARGS[@]} -eq 0 ]]; then
+  echo "❯ 执行安装（未指定地址→交给 install_server.sh 自动检测）..."
+else
+  echo "❯ 执行安装（${SERVER_ARGS[*]}）..."
+fi
+"$PKG_DIR/install_server.sh" "${SERVER_ARGS[@]}"
 
 echo ""
 echo "═══════════════════════════════════════"

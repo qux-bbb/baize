@@ -34,8 +34,11 @@ curl -fsSL https://raw.githubusercontent.com/qux-bbb/baize/main/install.sh | sud
 - 指定 Server 局域网地址（免交互，证书 SAN + Agent 连接地址）：
 
   ```bash
-  BAIZE_PUBLIC_ADDR=192.168.1.10 curl -fsSL https://raw.githubusercontent.com/qux-bbb/baize/main/install.sh | sudo bash
+  curl -fsSL https://raw.githubusercontent.com/qux-bbb/baize/main/install.sh | sudo bash -s -- --public-addr 192.168.1.10
   ```
+
+  > ⚠️ 用 `bash -s --` 位置参数传地址/端口（`--port`/`--http-port` 同理）。
+  > 不要用环境变量前缀（`VAR=x curl | sudo bash` 只到 curl、且 `sudo` 默认 `env_reset` 会清空自定义环境变量，bash 都拿不到）。
 
 - 不指定地址则 `install_server.sh` 自动检测本机 IP 供选择（多一次交互）
 - 可选：`BAIZE_VERSION`（指定版本）、`BAIZE_OFFLINE_TARBALL`（本地包，离线现场）
