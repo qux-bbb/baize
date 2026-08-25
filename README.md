@@ -2,7 +2,7 @@
 
 > 白泽识妖，无所遁形
 
-Baize 是一个轻量终端安全检测系统：Rust Agent 采集 Windows 进程事件，经 TLS gRPC 上报 Go Server（Bleve 内嵌存储 + 检测引擎），React Dashboard 展示主机/事件/告警。
+Baize 是一个轻量的 Agent–Server 采集与分析平台：Rust Agent 采集 Windows 进程事件，经 TLS gRPC 上报 Go Server（Bleve 内嵌存储 + 分析引擎），React Dashboard 展示主机/事件/告警。
 
 ## 快速安装
 
