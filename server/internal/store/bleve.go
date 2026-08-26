@@ -30,6 +30,12 @@ const (
 	systemStateType = "system_state"
 )
 
+// eventFields 事件文档的全量检索字段白名单（详情弹窗 / CSV 导出共用）。
+// 对齐 EventDoc 可存储的字段；Bleve search.Fields 会对清单内每个字段返回一条
+// （即使文档没存也返回空值），由 filterEmptyFields 在返回前剔除空值字段。
+// 单一来源，避免与 SearchEventsRaw 的字段清单漂移。
+var eventFields = []string{"@timestamp", "event_type", "event_action", "pid", "hostname", "agent_id", "os_type", "parent_pid", "process_name", "image_path", "command_line", "user", "file_path", "file_size", "hash_sha256", "local_ip", "local_port", "remote_ip", "remote_port", "protocol", "direction", "registry_key", "registry_value_name", "task_name", "task_path", "rule_name", "target_path", "matched_string", "query_name", "query_type", "result_ips"}
+
 // ErrAlertNotFound 告警文档不存在（API 层据此返回 404 而非 500）
 var ErrAlertNotFound = errors.New("告警不存在")
 
@@ -59,9 +65,16 @@ type hostState struct {
 	count     uint64 // 已见过的事件最大 seq（= 事件数）
 }
 
-// EventDoc 事件文档（写入 Bleve 的结构）
-type EventDoc struct {
-	Type         string `json:"type"`
+// ── EventDoc 字段分组 ──────────────────────────────────────────────
+// EventDoc 用 Go 匿名字段(embedded)把字段按语义归组，Bleve 索引时会
+// 自动展平为顶层字段（字段路径不变，查询/mapping/facets 均不受影响，
+// 见 walkDocument 对匿名 struct 的 elide 逻辑）。每个字段必须唯一归属
+// 一个子结构，否则嵌入式在 Go 侧产生字段歧义。
+//
+// 跨类型复用的「关联进程/文件」字段收敛在 AssocPart，其余按事件类型分组。
+
+// AgentPart 主机/Agent 元信息
+type AgentPart struct {
 	Timestamp    string `json:"@timestamp"`
 	AgentID      string `json:"agent_id"`
 	Hostname     string `json:"hostname"`
@@ -69,56 +82,97 @@ type EventDoc struct {
 	OSVersion    string `json:"os_version"`
 	AgentVersion string `json:"agent_version,omitempty"`
 	Arch         string `json:"arch,omitempty"`
-	EventType    string `json:"event_type"`
-	EventAction  string `json:"event_action,omitempty"`
-	Category     string `json:"event_category"`
+}
 
-	// 进程字段
+// EventHeader 事件通用标头
+type EventHeader struct {
+	EventType   string `json:"event_type"`
+	EventAction string `json:"event_action,omitempty"`
+	Category    string `json:"event_category"`
+}
+
+// AssocPart 跨事件类型复用的「关联进程/文件」字段（PID、进程名、镜像路径、哈希）
+type AssocPart struct {
 	PID         uint64 `json:"pid,omitempty"`
-	ParentPID   uint64 `json:"parent_pid,omitempty"`
 	ProcessName string `json:"process_name,omitempty"`
 	ImagePath   string `json:"image_path,omitempty"`
+	HashSHA     string `json:"hash_sha256,omitempty"`
+}
+
+// ProcessPart 进程特有字段
+type ProcessPart struct {
+	ParentPID   uint64 `json:"parent_pid,omitempty"`
 	CommandLine string `json:"command_line,omitempty"`
 	User        string `json:"user,omitempty"`
+}
 
-	// 文件字段
+// FilePart 文件特有字段
+type FilePart struct {
 	FilePath string `json:"file_path,omitempty"`
 	FileSize uint64 `json:"file_size,omitempty"`
-	HashSHA  string `json:"hash_sha256,omitempty"`
+}
 
-	// 网络字段
+// NetPart 网络特有字段
+type NetPart struct {
 	LocalIP    string `json:"local_ip,omitempty"`
 	LocalPort  uint32 `json:"local_port,omitempty"`
 	RemoteIP   string `json:"remote_ip,omitempty"`
 	RemotePort uint32 `json:"remote_port,omitempty"`
 	Protocol   string `json:"protocol,omitempty"`
 	Direction  string `json:"direction,omitempty"`
+}
 
-	// 注册表
+// RegistryPart 注册表特有字段
+type RegistryPart struct {
 	RegistryKey       string `json:"registry_key,omitempty"`
 	RegistryValueName string `json:"registry_value_name,omitempty"`
+}
 
-	// 计划任务
+// TaskPart 计划任务特有字段
+type TaskPart struct {
 	TaskName string `json:"task_name,omitempty"`
 	TaskPath string `json:"task_path,omitempty"`
+}
 
-	// YARA
-	RuleName      string `json:"rule_name,omitempty"`
+// YaraPart YARA 特有字段
+type YaraPart struct {
 	TargetPath    string `json:"target_path,omitempty"`
 	MatchedString string `json:"matched_string,omitempty"`
+}
 
-	// DNS
-	QueryName  string `json:"query_name,omitempty"`
-	QueryType  string `json:"query_type,omitempty"`
-	ResultIPs  string `json:"result_ips,omitempty"`
+// DnsPart DNS 特有字段
+type DnsPart struct {
+	QueryName string `json:"query_name,omitempty"`
+	QueryType string `json:"query_type,omitempty"`
+	ResultIPs string `json:"result_ips,omitempty"`
+}
 
-	// 告警专用
-	AlertID      string   `json:"alert_id,omitempty"`
-	RuleID       string   `json:"rule_id,omitempty"`
-	Severity     string   `json:"severity,omitempty"`
-	Description  string   `json:"description,omitempty"`
-	Tags         []string `json:"tags,omitempty"`
-	SourceEvent  string   `json:"source_event,omitempty"`
+// AlertPart 告警专用字段
+type AlertPart struct {
+	AlertID     string   `json:"alert_id,omitempty"`
+	RuleName    string   `json:"rule_name,omitempty"`
+	RuleID      string   `json:"rule_id,omitempty"`
+	Severity    string   `json:"severity,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+	SourceEvent string   `json:"source_event,omitempty"`
+}
+
+// EventDoc 事件文档（写入 Bleve 的结构）。Type 留外层——Bleve determineType
+// 用它读取文档类型；其余字段通过 embedded 子结构展平为顶层路径。
+type EventDoc struct {
+	Type string `json:"type"`
+	AgentPart
+	EventHeader
+	AssocPart
+	ProcessPart
+	FilePart
+	NetPart
+	RegistryPart
+	TaskPart
+	YaraPart
+	DnsPart
+	AlertPart
 }
 
 // New 创建/打开 Bleve 索引
@@ -472,8 +526,8 @@ type SystemStateDoc struct {
 	Type           string `json:"type"`
 	AgentID        string `json:"agent_id"`
 	Hostname       string `json:"hostname"`
-	CapturedAt     string `json:"captured_at"` // Agent 侧采集时间 (RFC3339)
-	ReceivedAt     string `json:"received_at"` // Server 侧收到时间 (RFC3339)
+	CapturedAt     string `json:"captured_at"`     // Agent 侧采集时间 (RFC3339)
+	ReceivedAt     string `json:"received_at"`     // Server 侧收到时间 (RFC3339)
 	Processes      string `json:"processes"`       // JSON: []pb.ProcessInfo
 	TCPConnections string `json:"tcp_connections"` // JSON: []pb.ConnectionInfo
 	UDPEndpoints   string `json:"udp_endpoints"`   // JSON: []pb.ConnectionInfo
@@ -674,7 +728,7 @@ func (s *Store) SearchEventsRaw(hostname, query string, size int) ([]map[string]
 	search := bleve.NewSearchRequest(q)
 	search.Size = size
 	search.SortBy([]string{"-@timestamp"})
-	search.Fields = []string{"@timestamp", "event_type", "event_action", "pid", "hostname", "agent_id", "os_type", "parent_pid", "process_name", "image_path", "command_line", "user", "file_path", "file_size", "hash_sha256", "local_ip", "local_port", "remote_ip", "remote_port", "protocol", "direction", "registry_key", "registry_value_name", "task_name", "task_path", "rule_name", "target_path", "matched_string", "query_name", "query_type", "result_ips"}
+	search.Fields = eventFields
 	result, err := s.index.Search(search)
 	if err != nil {
 		return nil, err
@@ -716,7 +770,7 @@ func (s *Store) SearchEvents(hostname, query string, size int) ([]EventResult, e
 	search := bleve.NewSearchRequest(q)
 	search.Size = size
 	search.SortBy([]string{"-@timestamp"})
-	search.Fields = []string{"@timestamp", "event_type", "event_action", "pid", "hostname", "image_path", "file_path", "local_ip", "local_port", "remote_ip", "remote_port", "registry_key", "task_name", "rule_name", "target_path", "command_line", "process_name", "query_name", "query_type", "result_ips"}
+	search.Fields = eventFields
 
 	result, err := s.index.Search(search)
 	if err != nil {
@@ -729,9 +783,9 @@ func (s *Store) SearchEvents(hostname, query string, size int) ([]EventResult, e
 		if query != "" {
 			// 检查所有字段
 			matched := false
-			for _, f := range []string{"hostname","event_type","image_path","command_line",
-				"file_path","local_ip","remote_ip","process_name","query_name","result_ips",
-				"summary","registry_key","task_name","target_path","protocol","direction"} {
+			for _, f := range []string{"hostname", "event_type", "image_path", "command_line",
+				"file_path", "local_ip", "remote_ip", "process_name", "query_name", "result_ips",
+				"summary", "registry_key", "task_name", "target_path", "protocol", "direction"} {
 				if v := getFieldStr(hit.Fields, f); v != "" && strings.Contains(strings.ToLower(v), strings.ToLower(query)) {
 					matched = true
 					break
@@ -747,7 +801,7 @@ func (s *Store) SearchEvents(hostname, query string, size int) ([]EventResult, e
 			Hostname:  getFieldStr(hit.Fields, "hostname"),
 			Summary:   buildSummary(hit.Fields),
 			PID:       getFieldUint(hit.Fields, "pid"),
-			Raw:       hit.Fields,
+			Raw:       filterEmptyFields(hit.Fields),
 		})
 	}
 	return events, nil
@@ -803,14 +857,16 @@ func EventTime(event *pb.Event) string {
 func eventToDoc(event *pb.Event) EventDoc {
 	now := EventTime(event)
 	doc := EventDoc{
-		Timestamp:    now,
-		AgentID:      event.GetAgentInfo().GetAgentId(),
-		Hostname:     event.GetAgentInfo().GetHostname(),
-		OSType:       event.GetAgentInfo().GetOsType(),
-		OSVersion:    event.GetAgentInfo().GetOsVersion(),
-		AgentVersion: event.GetAgentInfo().GetAgentVersion(),
-		Arch:         event.GetAgentInfo().GetArch(),
-		EventType:    getEventType(event),
+		AgentPart: AgentPart{
+			Timestamp:    now,
+			AgentID:      event.GetAgentInfo().GetAgentId(),
+			Hostname:     event.GetAgentInfo().GetHostname(),
+			OSType:       event.GetAgentInfo().GetOsType(),
+			OSVersion:    event.GetAgentInfo().GetOsVersion(),
+			AgentVersion: event.GetAgentInfo().GetAgentVersion(),
+			Arch:         event.GetAgentInfo().GetArch(),
+		},
+		EventHeader: EventHeader{EventType: getEventType(event)},
 	}
 
 	switch e := event.GetEventType().(type) {
@@ -892,16 +948,22 @@ func eventToDoc(event *pb.Event) EventDoc {
 
 func alertToDoc(alert map[string]interface{}) EventDoc {
 	doc := EventDoc{
-		Timestamp:   getMapStr(alert, "@timestamp"),
-		AlertID:     getMapStr(alert, "alert_id"),
-		RuleName:    getMapStr(alert, "rule_name"),
-		RuleID:      getMapStr(alert, "rule_id"),
-		Severity:    getMapStr(alert, "severity"),
-		Hostname:    getMapStr(alert, "hostname"),
-		Description: getMapStr(alert, "description"),
-		EventType:   getMapStr(alert, "event_type"),
-		Category:    "alert",
-		SourceEvent: getMapStr(alert, "source_event"),
+		AgentPart: AgentPart{
+			Timestamp: getMapStr(alert, "@timestamp"),
+			Hostname:  getMapStr(alert, "hostname"),
+		},
+		EventHeader: EventHeader{
+			EventType: getMapStr(alert, "event_type"),
+			Category:  "alert",
+		},
+		AlertPart: AlertPart{
+			AlertID:     getMapStr(alert, "alert_id"),
+			RuleName:    getMapStr(alert, "rule_name"),
+			RuleID:      getMapStr(alert, "rule_id"),
+			Severity:    getMapStr(alert, "severity"),
+			Description: getMapStr(alert, "description"),
+			SourceEvent: getMapStr(alert, "source_event"),
+		},
 	}
 	if tags, ok := alert["tags"].([]string); ok {
 		doc.Tags = tags
@@ -1038,6 +1100,36 @@ func getFieldStrs(fields map[string]interface{}, key string) []string {
 		}
 	}
 	return nil
+}
+
+// filterEmptyFields 剔除值为空的字段（空串、0、空数组等），对齐 ES/Wazuh
+// "fields 对 _source 里找不到的字段直接跳过"的语义：
+// Bleve search.Fields 会对白名单内的每个字段都返回一条——即使文档根本没存
+// 该字段（返回空串/0），导致进程事件混入 local_ip/registry_key 等无关空字段，
+// 前端详情弹窗按 raw 原样平铺渲染正是"进程事件带网络/注册表字段"的根因。
+// 过滤后 raw 只保留该事件实际有值的字段。
+func filterEmptyFields(fields map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(fields))
+	for k, v := range fields {
+		switch val := v.(type) {
+		case string:
+			if val == "" {
+				continue
+			}
+		case float64:
+			if val == 0 {
+				continue
+			}
+		case []interface{}:
+			if len(val) == 0 {
+				continue
+			}
+		case nil:
+			continue
+		}
+		out[k] = v
+	}
+	return out
 }
 
 func buildSummary(fields map[string]interface{}) string {
