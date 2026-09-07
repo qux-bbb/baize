@@ -42,9 +42,25 @@ sudo ./install_server.sh
 
 ## 开发模式
 
-- **启动 Server**（自动编译前端）：`cd server && run.bat` → Dashboard `https://localhost:8080`
-- **编译 Agent**：`cd agent && cargo build`（需 protoc；产物 `agent\target\debug\baize-agent.exe`，调试模式连接本机 `https://127.0.0.1:50051`，需把 `server/data/ca.crt` 拷到 exe 同目录并写 agent.conf）
-- **重新生成 Protobuf**（改了 `proto/baize/v1/baize.proto` 后）：`cd proto && protoc --proto_path=. --go_out=gen/go --go_opt=paths=source_relative --go-grpc_out=gen/go --go-grpc_opt=paths=source_relative baize/v1/baize.proto`
+- **前置：协议变更后重新生成** — 新增/修改事件字段、事件类型、指令或 RPC 时执行（生成码入库，run.bat / go build 不会自动重生成）
+
+  ```
+  cd proto && protoc --proto_path=. --go_out=gen/go --go_opt=paths=source_relative --go-grpc_out=gen/go --go-grpc_opt=paths=source_relative baize/v1/baize.proto
+  ```
+
+- **一键构建并启动**（默认入口，自动编译 Agent + 前端 + Server，Dashboard `https://localhost:8080`）
+
+  ```
+  cd server && run.bat
+  ```
+
+- **Agent 源码联调**（改 agent 代码时；cargo 自动生成 Rust 协议码，无需手动 protoc）
+
+  ```
+  cd agent && cargo build
+  ```
+
+  debug 产物连本机 `https://127.0.0.1:50051`；联调前把 `server/data/ca.crt` 拷到 exe 同目录并写 agent.conf（需 protoc）
 
 ## 技术栈
 
