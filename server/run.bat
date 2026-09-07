@@ -1,4 +1,12 @@
 @echo off
+echo Building agent...
+cd /d %~dp0..\agent
+call cargo build --release
+if %errorlevel% neq 0 (
+    echo Agent build failed, check cargo Rust toolchain
+    pause
+    exit /b %errorlevel%
+)
 cd /d %~dp0
 echo Building frontend...
 cd web
