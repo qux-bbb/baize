@@ -112,6 +112,38 @@ unsafe extern "system" fn process_callback(
     let parent_pid = extract_pid(&xml, "ProcessId");
     let image_path = extract_xml(&xml, "NewProcessName");
     let command_line = extract_xml(&xml, "CommandLine");
+    // 进程运行用户：
+    // - Target 有效（非空且非 "-"）→ 优先 Target（runas/跨 logon 场景的进程实际运行用户）；
+    // - 否则回退 Creator Subject：
+    //     Subject 为 LocalSystem(S-1-5-18) → "SYSTEM"；
+    //     否则 → DOMAIN\user。
+    // 注：Windows 审计事件中字段值 "-" 表示无值/未知，一律视为无效（避免拼出 "-\" 之类）。
+    let subject_user = extract_xml(&xml, "SubjectUserName");
+    let subject_domain = extract_xml(&xml, "SubjectDomainName");
+    let subject_sid = extract_xml(&xml, "SubjectUserSid");
+    let target_user = extract_xml(&xml, "TargetUserName");
+    let target_domain = extract_xml(&xml, "TargetDomainName");
+    let valid = |s: &str| !s.is_empty() && s != "-";
+    let user = if valid(&target_user) {
+        // 跨 logon / runas 场景的进程实际运行用户
+        if valid(&target_domain) {
+            format!("{}\\{}", target_domain, target_user)
+        } else {
+            target_user
+        }
+    } else if subject_sid.trim() == "S-1-5-18" {
+        // Creator 是 LocalSystem(SYSTEM) 上下文
+        "SYSTEM".to_string()
+    } else if valid(&subject_user) {
+        // Creator 普通用户（普通场景创建者即运行者）
+        if valid(&subject_domain) {
+            format!("{}\\{}", subject_domain, subject_user)
+        } else {
+            subject_user
+        }
+    } else {
+        String::new()
+    };
     if pid == 0 || image_path.is_empty() {
         return 0;
     }
@@ -121,17 +153,19 @@ unsafe extern "system" fn process_callback(
         let _ = tx.blocking_send(pb::Event {
             agent_info: None,
             sequence_id: 0,
-            event_type: Some(pb::event::EventType::ProcessCreate(pb::ProcessCreateEvent {
-                pid,
-                parent_pid,
-                command_line,
-                image_path,
-                hash_sha256: String::new(),
-                timestamp_ns: now,
-                user: String::new(),
-                session_id: 0,
-                is_elevated: false,
-            })),
+            event_type: Some(pb::event::EventType::ProcessCreate(
+                pb::ProcessCreateEvent {
+                    pid,
+                    parent_pid,
+                    command_line,
+                    image_path,
+                    hash_sha256: String::new(),
+                    timestamp_ns: now,
+                    user,
+                    session_id: 0,
+                    is_elevated: false,
+                },
+            )),
         });
     }
     0 // 继续订阅
