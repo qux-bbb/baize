@@ -112,6 +112,33 @@ func (h *Handler) Hosts(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"hosts": hosts})
 }
 
+// HostByID 按 agent_id 返回单个主机；不存在返回 404
+// GET /api/hosts/{id}
+func (h *Handler) HostByID(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		writeErr(w, 400, "missing id")
+		return
+	}
+	online := false
+	for _, aid := range h.cmdBus.AgentIDs() {
+		if aid == id {
+			online = true
+			break
+		}
+	}
+	host, err := h.store.GetHostByID(id, online)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if host == nil {
+		writeErr(w, 404, "主机不存在")
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"host": host})
+}
+
 // ── Enrollment Token 管理（JWT 保护）─────────────────────
 
 // EnrollmentTokens GET: token 列表（不含明文）；POST: 创建 token（明文只返回一次）

@@ -74,6 +74,8 @@ export default function App() {
 
   const [route, setRoute] = useState<Route>(parseHash)
   const [hosts, setHosts] = useState<Host[]>([])
+  // 主机详情页单独按 agent_id 请求到的当前主机（独立于 hosts 列表，支持直连/刷新）
+  const [hostDetail, setHostDetail] = useState<Host | null>(null)
   const [alerts, setAlerts] = useState<Alert[]>([])
   const [events, setEvents] = useState<EventItem[]>([])
   const [loading, setLoading] = useState(false)
@@ -160,6 +162,18 @@ export default function App() {
         const qs = params.toString()
         const d = await fetchJSON<{ events: EventItem[] }>(`${API}/events${qs ? '?' + qs : ''}`, opts)
         setEvents(d.events)
+      } else if (route.page === 'host-detail') {
+        // 详情页按 agent_id 独立向后端查询主机，避免依赖 hosts 列表（直连/刷新时列表未加载会误报"不存在"）
+        try {
+          const d = await fetchJSON<{ host: Host }>(`${API}/hosts/${(route as any).agentId}`, opts)
+          setHostDetail(d.host)
+        } catch (e: any) {
+          if (e.message === '主机不存在') {
+            setHostDetail(null) // 后端确认不存在 → 详情页显示"主机不存在"
+          } else {
+            setErr(e.message)
+          }
+        }
       }
     } catch (e: any) {
       console.warn('[Baize] load error:', e.message, '| route:', route.page, '| auth:', !!localStorage.getItem('token'))
@@ -290,7 +304,7 @@ export default function App() {
     }
   }
 
-  const host = route.page === 'host-detail' ? hosts.find(h => h.agent_id === route.agentId) : null
+  const host = route.page === 'host-detail' ? hostDetail : null
 
   // ── 表格列定义（AG Grid；列宽/排序/显隐状态按 stateKey 持久化）──
 
@@ -522,7 +536,7 @@ export default function App() {
           </div>
         )}
         {!loading && route.page === 'host-detail' && !host && (
-          <div className="empty">主机不存在或尚未加载</div>
+          <div className="empty">主机不存在</div>
         )}
 
         {!loading && route.page === 'alerts' && (

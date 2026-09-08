@@ -628,6 +628,9 @@ func formatNs(ns uint64) string {
 // ── 查询方法 ──────────────────────────────────────────────
 
 // SearchHosts 查询所有主机（查独立的主机文档 type:host，毫秒级）
+// SearchHosts / GetHostByID 共用的主机文档字段列表
+var hostSearchFields = []string{"agent_id", "hostname", "os_type", "os_version", "agent_version", "arch", "ip_addresses", "first_seen", "last_seen", "event_count"}
+
 func (s *Store) SearchHosts(onlineIDs ...[]string) ([]HostResult, error) {
 	online := make(map[string]bool)
 	if len(onlineIDs) > 0 {
@@ -639,7 +642,7 @@ func (s *Store) SearchHosts(onlineIDs ...[]string) ([]HostResult, error) {
 	q := bleve.NewQueryStringQuery(`type:host`)
 	search := bleve.NewSearchRequest(q)
 	search.Size = 10000
-	search.Fields = []string{"agent_id", "hostname", "os_type", "os_version", "agent_version", "arch", "ip_addresses", "first_seen", "last_seen", "event_count"}
+	search.Fields = hostSearchFields
 
 	result, err := s.index.Search(search)
 	if err != nil {
@@ -666,6 +669,42 @@ func (s *Store) SearchHosts(onlineIDs ...[]string) ([]HostResult, error) {
 		})
 	}
 	return hosts, nil
+}
+
+// GetHostByID 按 agent_id 精确查询单一主机；不存在返回 (nil, nil)
+func (s *Store) GetHostByID(agentID string, online bool) (*HostResult, error) {
+	// agent_id 是 keyword 字段且含连字符，不能走 query string（会拆词失效），
+	// 与 GetSystemState 一致，用 TermQuery + SetField 精确匹配
+	agentQ := bleve.NewTermQuery(agentID)
+	agentQ.SetField("agent_id")
+	typeQ := bleve.NewTermQuery(hostType)
+	typeQ.SetField("type")
+	q := bleve.NewConjunctionQuery(typeQ, agentQ)
+	search := bleve.NewSearchRequest(q)
+	search.Size = 1
+	search.Fields = hostSearchFields
+
+	result, err := s.index.Search(search)
+	if err != nil {
+		return nil, err
+	}
+	if len(result.Hits) == 0 {
+		return nil, nil
+	}
+	hit := result.Hits[0]
+	h := &HostResult{
+		AgentID:      getFieldStr(hit.Fields, "agent_id"),
+		Hostname:     getFieldStr(hit.Fields, "hostname"),
+		IsOnline:     online,
+		EventCount:   int(getFieldUint(hit.Fields, "event_count")),
+		LastSeen:     getFieldStr(hit.Fields, "last_seen"),
+		OSType:       getFieldStr(hit.Fields, "os_type"),
+		OSVersion:    getFieldStr(hit.Fields, "os_version"),
+		AgentVersion: getFieldStr(hit.Fields, "agent_version"),
+		Arch:         getFieldStr(hit.Fields, "arch"),
+		Ips:          getFieldStrs(hit.Fields, "ip_addresses"),
+	}
+	return h, nil
 }
 
 // SearchAlerts 查询告警

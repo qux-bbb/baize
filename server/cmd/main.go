@@ -382,6 +382,7 @@ func main() {
 			mux.HandleFunc("POST /api/change-password", apiHandler.ChangePassword)
 			mux.HandleFunc("POST /api/logout", apiHandler.Logout)
 			mux.HandleFunc("GET /api/hosts", apiHandler.Hosts)
+			mux.HandleFunc("GET /api/hosts/{id}", apiHandler.HostByID)
 			mux.HandleFunc("GET /api/agents", apiHandler.AgentList)
 			mux.HandleFunc("DELETE /api/agents/{id}", apiHandler.AgentDelete)
 			mux.HandleFunc("GET /api/enrollment-tokens", apiHandler.EnrollmentTokens)
