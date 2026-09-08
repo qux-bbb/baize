@@ -1,6 +1,7 @@
 @echo off
 echo Building agent...
 cd /d %~dp0..\agent
+set "PROTOC=%USERPROFILE%\protoc\bin\protoc.exe"
 call cargo build --release
 if %errorlevel% neq 0 (
     echo Agent build failed, check cargo Rust toolchain
