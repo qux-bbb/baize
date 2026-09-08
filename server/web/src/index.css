@@ -164,8 +164,8 @@ h1 { font-family: var(--font); font-size: 1.25rem; font-weight: 700; }
 .clickable { cursor: pointer; }
 .link { color: #60a5fa; cursor: pointer; }
 .link:hover { text-decoration: underline; }
-.back { cursor: pointer; color: var(--accent); margin-right: 0.3rem; font-size: 1.1rem; }
-.back:hover { opacity: 0.7; }
+.back { cursor: pointer; color: var(--accent); margin-right: 0.4rem; font-size: 1.6rem; line-height: 1; padding: 0.3rem 0.6rem; border-radius: 6px; }
+.back:hover { background: rgba(34, 211, 238, 0.1); }
 
 /* Host detail page */
 .host-detail { padding: 0; }
