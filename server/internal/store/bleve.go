@@ -34,7 +34,7 @@ const (
 // 对齐 EventDoc 可存储的字段；Bleve search.Fields 会对清单内每个字段返回一条
 // （即使文档没存也返回空值），由 filterEmptyFields 在返回前剔除空值字段。
 // 单一来源，避免与 SearchEventsRaw 的字段清单漂移。
-var eventFields = []string{"@timestamp", "event_type", "event_action", "pid", "hostname", "agent_id", "os_type", "parent_pid", "process_name", "image_path", "command_line", "user", "file_path", "file_size", "hash_sha256", "local_ip", "local_port", "remote_ip", "remote_port", "protocol", "direction", "registry_key", "registry_value_name", "task_name", "task_path", "rule_name", "target_path", "matched_string", "query_name", "query_type", "result_ips"}
+var eventFields = []string{"@timestamp", "event_type", "event_action", "pid", "hostname", "agent_id", "os_type", "parent_pid", "parent_image_path", "process_name", "image_path", "command_line", "user", "file_path", "file_size", "hash_sha256", "local_ip", "local_port", "remote_ip", "remote_port", "protocol", "direction", "registry_key", "registry_value_name", "task_name", "task_path", "rule_name", "target_path", "matched_string", "query_name", "query_type", "result_ips"}
 
 // ErrAlertNotFound 告警文档不存在（API 层据此返回 404 而非 500）
 var ErrAlertNotFound = errors.New("告警不存在")
@@ -101,9 +101,10 @@ type AssocPart struct {
 
 // ProcessPart 进程特有字段
 type ProcessPart struct {
-	ParentPID   uint64 `json:"parent_pid,omitempty"`
-	CommandLine string `json:"command_line,omitempty"`
-	User        string `json:"user,omitempty"`
+	ParentPID       uint64 `json:"parent_pid,omitempty"`
+	ParentImagePath string `json:"parent_image_path,omitempty"`
+	CommandLine     string `json:"command_line,omitempty"`
+	User            string `json:"user,omitempty"`
 }
 
 // FilePart 文件特有字段
@@ -202,6 +203,7 @@ func New(path string) (*Store, error) {
 		docMapping.AddFieldMappingsAt("event_type", textFieldMapping)
 		docMapping.AddFieldMappingsAt("rule_name", textFieldMapping)
 		docMapping.AddFieldMappingsAt("image_path", textFieldMapping)
+		docMapping.AddFieldMappingsAt("parent_image_path", textFieldMapping)
 		docMapping.AddFieldMappingsAt("command_line", textFieldMapping)
 		docMapping.AddFieldMappingsAt("file_path", textFieldMapping)
 		docMapping.AddFieldMappingsAt("remote_ip", textFieldMapping)
@@ -875,6 +877,7 @@ func eventToDoc(event *pb.Event) EventDoc {
 		doc.EventAction = "create"
 		doc.PID = e.ProcessCreate.GetPid()
 		doc.ParentPID = e.ProcessCreate.GetParentPid()
+		doc.ParentImagePath = e.ProcessCreate.GetParentImagePath()
 		doc.CommandLine = e.ProcessCreate.GetCommandLine()
 		doc.ImagePath = e.ProcessCreate.GetImagePath()
 		doc.HashSHA = e.ProcessCreate.GetHashSha256()

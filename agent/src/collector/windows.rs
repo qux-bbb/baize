@@ -80,12 +80,13 @@ fn parse_process_create(xml: &str, now: u64) -> Option<pb::Event> {
     let ppid = extract_data(xml, "ParentProcessID")?.parse().ok()?;
     let cmdline = extract_data(xml, "CommandLine").unwrap_or_default();
     let image = extract_data(xml, "NewProcessName").unwrap_or_default();
+    let parent_image = extract_data(xml, "ParentProcessName").unwrap_or_default();
     let user = extract_data(xml, "SubjectUserName").unwrap_or_default();
 
     Some(pb::Event {
         agent_info: None, sequence_id: 0,
         event_type: Some(pb::event::EventType::ProcessCreate(pb::ProcessCreateEvent {
-            pid, parent_pid: ppid, command_line: cmdline, image_path: image,
+            pid, parent_pid: ppid, parent_image_path: parent_image, command_line: cmdline, image_path: image,
             hash_sha256: String::new(), timestamp_ns: now, user,
             session_id: 0, is_elevated: false,
         })),

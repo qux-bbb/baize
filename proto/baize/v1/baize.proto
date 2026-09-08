@@ -42,7 +42,8 @@ message ProcessCreateEvent {
   string user = 7;                // 运行用户 (DOMAIN\username)
   uint32 session_id = 8;          // Windows 登录 Session ID
   bool is_elevated = 9;           // 是否以管理员/root 权限运行
-}
+  string parent_image_path = 10;  // 父进程可执行文件名/路径 (4688 ParentProcessName)
+  }
 
 // 进程终止
 message ProcessTerminateEvent {

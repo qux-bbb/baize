@@ -29,6 +29,7 @@ func EventToFieldMap(event *pb.Event) map[string]string {
 	case *pb.Event_ProcessCreate:
 		m["pid"] = fmt.Sprintf("%d", e.ProcessCreate.GetPid())
 		m["parent_pid"] = fmt.Sprintf("%d", e.ProcessCreate.GetParentPid())
+		m["parent_image_path"] = e.ProcessCreate.GetParentImagePath()
 		m["command_line"] = e.ProcessCreate.GetCommandLine()
 		m["image_path"] = e.ProcessCreate.GetImagePath()
 		m["hash_sha256"] = e.ProcessCreate.GetHashSha256()

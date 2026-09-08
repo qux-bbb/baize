@@ -132,18 +132,19 @@ func (x *AgentInfo) GetArch() string {
 
 // 进程创建 — 最核心的检测数据源
 type ProcessCreateEvent struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Pid           uint64                 `protobuf:"varint,1,opt,name=pid,proto3" json:"pid,omitempty"`                                    // 进程 PID
-	ParentPid     uint64                 `protobuf:"varint,2,opt,name=parent_pid,json=parentPid,proto3" json:"parent_pid,omitempty"`       // 父进程 PID
-	CommandLine   string                 `protobuf:"bytes,3,opt,name=command_line,json=commandLine,proto3" json:"command_line,omitempty"`  // 完整命令行 (含参数, 已脱敏?)
-	ImagePath     string                 `protobuf:"bytes,4,opt,name=image_path,json=imagePath,proto3" json:"image_path,omitempty"`        // 可执行文件绝对路径
-	HashSha256    string                 `protobuf:"bytes,5,opt,name=hash_sha256,json=hashSha256,proto3" json:"hash_sha256,omitempty"`     // SHA256 哈希 (Agent 算好再上报)
-	TimestampNs   uint64                 `protobuf:"varint,6,opt,name=timestamp_ns,json=timestampNs,proto3" json:"timestamp_ns,omitempty"` // 事件发生时间 (纳秒)
-	User          string                 `protobuf:"bytes,7,opt,name=user,proto3" json:"user,omitempty"`                                   // 运行用户 (DOMAIN\username)
-	SessionId     uint32                 `protobuf:"varint,8,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`       // Windows 登录 Session ID
-	IsElevated    bool                   `protobuf:"varint,9,opt,name=is_elevated,json=isElevated,proto3" json:"is_elevated,omitempty"`    // 是否以管理员/root 权限运行
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Pid             uint64                 `protobuf:"varint,1,opt,name=pid,proto3" json:"pid,omitempty"`                                                  // 进程 PID
+	ParentPid       uint64                 `protobuf:"varint,2,opt,name=parent_pid,json=parentPid,proto3" json:"parent_pid,omitempty"`                     // 父进程 PID
+	CommandLine     string                 `protobuf:"bytes,3,opt,name=command_line,json=commandLine,proto3" json:"command_line,omitempty"`                // 完整命令行 (含参数, 已脱敏?)
+	ImagePath       string                 `protobuf:"bytes,4,opt,name=image_path,json=imagePath,proto3" json:"image_path,omitempty"`                      // 可执行文件绝对路径
+	HashSha256      string                 `protobuf:"bytes,5,opt,name=hash_sha256,json=hashSha256,proto3" json:"hash_sha256,omitempty"`                   // SHA256 哈希 (Agent 算好再上报)
+	TimestampNs     uint64                 `protobuf:"varint,6,opt,name=timestamp_ns,json=timestampNs,proto3" json:"timestamp_ns,omitempty"`               // 事件发生时间 (纳秒)
+	User            string                 `protobuf:"bytes,7,opt,name=user,proto3" json:"user,omitempty"`                                                 // 运行用户 (DOMAIN\username)
+	SessionId       uint32                 `protobuf:"varint,8,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`                     // Windows 登录 Session ID
+	IsElevated      bool                   `protobuf:"varint,9,opt,name=is_elevated,json=isElevated,proto3" json:"is_elevated,omitempty"`                  // 是否以管理员/root 权限运行
+	ParentImagePath string                 `protobuf:"bytes,10,opt,name=parent_image_path,json=parentImagePath,proto3" json:"parent_image_path,omitempty"` // 父进程可执行文件名/路径 (4688 ParentProcessName)
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ProcessCreateEvent) Reset() {
@@ -237,6 +238,13 @@ func (x *ProcessCreateEvent) GetIsElevated() bool {
 		return x.IsElevated
 	}
 	return false
+}
+
+func (x *ProcessCreateEvent) GetParentImagePath() string {
+	if x != nil {
+		return x.ParentImagePath
+	}
+	return ""
 }
 
 // 进程终止
@@ -2468,7 +2476,7 @@ const file_baize_v1_baize_proto_rawDesc = "" +
 	"\fip_addresses\x18\a \x03(\tR\vipAddresses\x12 \n" +
 	"\fboot_time_ns\x18\b \x01(\x04R\n" +
 	"bootTimeNs\x12\x12\n" +
-	"\x04arch\x18\t \x01(\tR\x04arch\"\x9f\x02\n" +
+	"\x04arch\x18\t \x01(\tR\x04arch\"\xcb\x02\n" +
 	"\x12ProcessCreateEvent\x12\x10\n" +
 	"\x03pid\x18\x01 \x01(\x04R\x03pid\x12\x1d\n" +
 	"\n" +
@@ -2483,7 +2491,9 @@ const file_baize_v1_baize_proto_rawDesc = "" +
 	"\n" +
 	"session_id\x18\b \x01(\rR\tsessionId\x12\x1f\n" +
 	"\vis_elevated\x18\t \x01(\bR\n" +
-	"isElevated\"i\n" +
+	"isElevated\x12*\n" +
+	"\x11parent_image_path\x18\n" +
+	" \x01(\tR\x0fparentImagePath\"i\n" +
 	"\x15ProcessTerminateEvent\x12\x10\n" +
 	"\x03pid\x18\x01 \x01(\x04R\x03pid\x12!\n" +
 	"\ftimestamp_ns\x18\x02 \x01(\x04R\vtimestampNs\x12\x1b\n" +

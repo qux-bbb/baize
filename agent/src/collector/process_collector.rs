@@ -110,6 +110,7 @@ unsafe extern "system" fn process_callback(
 
     let pid = extract_pid(&xml, "NewProcessId");
     let parent_pid = extract_pid(&xml, "ProcessId");
+    let parent_image_path = extract_xml(&xml, "ParentProcessName");
     let image_path = extract_xml(&xml, "NewProcessName");
     let command_line = extract_xml(&xml, "CommandLine");
     // 进程运行用户：
@@ -157,6 +158,7 @@ unsafe extern "system" fn process_callback(
                 pb::ProcessCreateEvent {
                     pid,
                     parent_pid,
+                    parent_image_path,
                     command_line,
                     image_path,
                     hash_sha256: String::new(),
