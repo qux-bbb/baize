@@ -36,7 +36,12 @@ impl Policy {
     /// 执行启用命令，返回是否成功
     fn enable(&self) -> bool {
         match self {
-            Policy::ProcessCreation => run_auditpol("{0CCE922B-69AE-11D9-BED3-505054503030}", true),
+            Policy::ProcessCreation => {
+                // 4688 默认不记录 CommandLine，须开注册表开关才记录命令行使
+                let ok = run_auditpol("{0CCE922B-69AE-11D9-BED3-505054503030}", true);
+                enable_cmdline_registry();
+                ok
+            }
             Policy::FilteringPlatformConnection => {
                 run_auditpol("{0CCE9226-69AE-11D9-BED3-505054503030}", true)
             }
@@ -79,6 +84,32 @@ fn run_auditpol(guid: &str, enable: bool) -> bool {
             tracing::warn!("[AuditPolicy] auditpol 执行失败: {}", e);
             false
         }
+    }
+}
+
+fn enable_cmdline_registry() {
+    // 4688 默认不记录 CommandLine，需 HKLM...\Audit\ProcessCreationIncludeCmdLine_Enabled=1 才记录。
+    // 仅在启用侧调用；disable 不删除（保守：不干预系统已有审计配置）。
+    let out = Command::new("reg")
+        .args([
+            "add",
+            r"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\Audit",
+            "/v",
+            "ProcessCreationIncludeCmdLine_Enabled",
+            "/t",
+            "REG_DWORD",
+            "/d",
+            "1",
+            "/f",
+        ])
+        .output();
+    match out {
+        Ok(o) if o.status.success() => tracing::info!("[AuditPolicy] 4688 命令行开关已开启"),
+        Ok(o) => tracing::warn!(
+            "[AuditPolicy] 开启 4688 命令行开关失败: {}",
+            String::from_utf8_lossy(&o.stderr).trim()
+        ),
+        Err(e) => tracing::warn!("[AuditPolicy] reg 执行失败: {}", e),
     }
 }
 
