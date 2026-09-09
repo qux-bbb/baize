@@ -5,7 +5,7 @@ import AgentDownload from './AgentDownload'
 import LoginPage from './LoginPage'
 import ChangePasswordPage from './ChangePasswordPage'
 import ChangePasswordModal from './ChangePasswordModal'
-import { API, fetchJSON, initAuth, setAuth, clearAuth, isMustChangePassword } from './api'
+import { API, fetchJSON, initAuth, setAuth, clearAuth, isMustChangePassword, killProcess } from './api'
 import { BaizeGrid, SEV, formatTime, sevCell, linkCell, statusCell, timeFormatter, sevComparator, dateFilterParams } from './grid'
 import './config.css'
 
@@ -97,6 +97,9 @@ export default function App() {
   const [sysLoading, setSysLoading] = useState(false)
   const [sysRefreshing, setSysRefreshing] = useState(false)
   const [sysErr, setSysErr] = useState('')
+  // 远程终止进程：确认弹窗 + 执行中状态（killConfirm 的 pid 来自进程快照）
+  const [killConfirm, setKillConfirm] = useState<{ pid: number; name: string } | null>(null)
+  const [killing, setKilling] = useState(false)
   // 系统状态标签页：进程 / TCP 连接 / UDP 监听（默认进程）
   const [sysTab, setSysTab] = useState<'procs' | 'tcp' | 'udp'>('procs')
   const [searchQ, setSearchQ] = useState('')
@@ -228,6 +231,22 @@ export default function App() {
 
   useEffect(() => { loadSystemState() }, [loadSystemState])
 
+  // 远程终止进程：下发 kill 指令，成功后刷新进程列表（进程已消失）
+  const doKill = useCallback(async () => {
+    if (!killConfirm || route.page !== 'host-detail') return
+    setKilling(true); setErr(''); setNotice('')
+    try {
+      await killProcess((route as any).agentId, killConfirm.pid)
+      setNotice(`已终止进程 ${killConfirm.name} (PID ${killConfirm.pid})`)
+      setKillConfirm(null)
+      loadSystemState() // kill 后刷新进程标签页
+    } catch (e: any) {
+      setErr('终止失败: ' + (e.message || e))
+    } finally {
+      setKilling(false)
+    }
+  }, [killConfirm, route, loadSystemState])
+
   // 实时刷新：查询当前状态并展示；Agent 收到指令会同时上报新系统状态（Server 覆盖落库 = 刷新即更新基线）
   const refreshSysInfo = useCallback(async () => {
     if (route.page !== 'host-detail') return
@@ -346,13 +365,24 @@ export default function App() {
     { headerName: '', colId: 'action', width: 64, sortable: false, resizable: false, filter: false, floatingFilter: false, cellRenderer: linkCell(setEventDetail) },
   ], [])
 
+  // 进程行操作：详情 + 终止（远程杀进程）。闭包只引用稳定 setState，不依赖 route，故 useMemo 无需加依赖
+  const procActionCell = useMemo(() => (p: ICellRendererParams) => {
+    const row = (p.data || {}) as any
+    return (
+      <span style={{ display: 'inline-flex', gap: '0.25rem' }}>
+        <button className="btn" style={{ fontSize: '0.72rem', padding: '2px 8px', margin: '2px 0' }} onClick={(e) => { e.stopPropagation(); setProcDetail(row) }} title="查看详情">详情</button>
+        <button className="btn" style={{ fontSize: '0.72rem', padding: '2px 8px', margin: '2px 0', color: '#dc2626', borderColor: '#dc2626' }} onClick={(e) => { e.stopPropagation(); setKillConfirm({ pid: row.pid, name: row.name }) }} title="远程终止进程">终止</button>
+      </span>
+    )
+  }, [])
+
   const procCols = useMemo<ColDef<any>[]>(() => [
     { headerName: 'PID', field: 'pid', width: 80, filter: 'agNumberColumnFilter' },
     { headerName: '名称', field: 'name', flex: 1, tooltipField: 'name' },
     { headerName: '路径', field: 'exe', flex: 2.4, tooltipField: 'exe', cellClass: 'summary-cell' },
     { headerName: 'CPU%', field: 'cpu', width: 80, valueFormatter: p => (p.value != null ? Number(p.value).toFixed(1) : '-'), filter: 'agNumberColumnFilter' },
     { headerName: '内存', field: 'memory', width: 90, valueFormatter: p => (p.value != null ? (Number(p.value) / 1024).toFixed(0) + 'KB' : '-'), filter: 'agNumberColumnFilter' },
-    { headerName: '', colId: 'action', width: 64, sortable: false, resizable: false, filter: false, floatingFilter: false, cellRenderer: linkCell(setProcDetail) },
+    { headerName: '', colId: 'action', width: 112, sortable: false, resizable: false, filter: false, floatingFilter: false, cellRenderer: procActionCell },
   ], [])
 
   const tcpCols = useMemo<ColDef<any>[]>(() => [
@@ -718,6 +748,26 @@ export default function App() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 远程终止进程确认弹窗 */}
+      {killConfirm && (
+        <div className="overlay" onClick={() => !killing && setKillConfirm(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '420px' }}>
+            <div className="modal-header">
+              <strong>终止进程</strong>
+              <span className="mono" style={{ marginLeft: '0.6rem' }}>PID {killConfirm.pid} · {killConfirm.name}</span>
+              <button className="close" onClick={() => setKillConfirm(null)} disabled={killing}>×</button>
+            </div>
+            <div className="modal-body">
+              <p style={{ margin: 0 }}>确定终止该进程？此操作不可恢复，可能影响系统稳定性。</p>
+              <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
+                <button className="btn" onClick={() => setKillConfirm(null)} disabled={killing}>取消</button>
+                <button className="btn" onClick={doKill} disabled={killing} style={{ color: '#fff', background: '#dc2626', borderColor: '#dc2626' }}>{killing ? '终止中...' : '确认终止'}</button>
+              </div>
             </div>
           </div>
         </div>

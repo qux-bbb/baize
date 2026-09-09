@@ -168,3 +168,22 @@ func (b *CommandBus) IsolateAgent(agentID string) {
 	cmd := BuildIsolateCmd(true)
 	_ = b.SendToAgent(agentID, cmd)
 }
+
+// ExecuteSync 下发指令并同步等待 Agent 执行结果。
+// 调用方区分三种情况：
+//   - err != nil：下发失败 / Agent 离线 / 超时（HTTP 应回 4xx）
+//   - res.Success == false：Agent 上报执行失败（用 res.ErrorMessage）
+//   - res.Success == true：执行成功
+func (b *CommandBus) ExecuteSync(agentID string, cmd *pb.Command, timeout time.Duration) (*pb.CommandResult, error) {
+	if err := b.SendToAgent(agentID, cmd); err != nil {
+		return nil, err
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if r, ok := b.getPendingResult(cmd.GetCommandId()); ok {
+			return r, nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return nil, fmt.Errorf("指令超时（Agent %s 未在 %v 内回报结果）", agentID, timeout)
+}

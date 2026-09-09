@@ -84,4 +84,13 @@ export async function fetchJSON<T>(url: string, options?: RequestInit): Promise<
   return r.json()
 }
 
+// 远程终止指定主机上的进程
+export async function killProcess(agentId: string, pid: number): Promise<{ status: string }> {
+  return fetchJSON<{ status: string }>(`${API}/cmd/kill`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agent_id: agentId, pid }),
+  })
+}
+
 export { API }

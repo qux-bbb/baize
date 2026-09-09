@@ -1,4 +1,5 @@
 package main
+
 import (
 	"context"
 	"crypto/tls"
@@ -31,6 +32,7 @@ import (
 
 //go:embed web/* web/assets/*
 var webFS embed.FS
+
 type baizeServer struct {
 	pb.UnimplementedBaizeServiceServer
 	es       *store.Store
@@ -101,7 +103,7 @@ func (s *baizeServer) AgentStream(stream pb.BaizeService_AgentStreamServer) erro
 	// 下发文件监控配置（主机级优先，无则用全局）
 	dirs := s.cfg.GetWatchDirs(agentID)
 	cmdChan <- &pb.Command{
-		CommandId: fmt.Sprintf("filewatch-init-%d", time.Now().Unix()),
+		CommandId:  fmt.Sprintf("filewatch-init-%d", time.Now().Unix()),
 		IssuedAtNs: uint64(time.Now().UnixNano()),
 		CommandType: &pb.Command_ConfigureFileWatch{
 			ConfigureFileWatch: &pb.ConfigureFileWatchCommand{
@@ -403,6 +405,7 @@ func main() {
 			mux.HandleFunc("GET /api/export/alerts", apiHandler.ExportAlerts)
 			mux.HandleFunc("GET /api/systeminfo", apiHandler.SystemInfo)
 			mux.HandleFunc("GET /api/system-state", apiHandler.SystemState)
+			mux.HandleFunc("POST /api/cmd/kill", apiHandler.CmdKill)
 		}
 		mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
