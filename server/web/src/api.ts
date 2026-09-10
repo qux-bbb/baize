@@ -93,4 +93,127 @@ export async function killProcess(agentId: string, pid: number): Promise<{ statu
   })
 }
 
+// ── 文件管理 ──────────────────────────────────────────────
+
+export interface DirEntry {
+  name: string
+  path: string
+  is_dir: boolean
+  size: number
+  modified: number
+}
+
+// 列出远程目录（path 为空 → Windows 驱动器列表 / Linux 根目录）
+export async function listDir(agentId: string, path: string): Promise<DirEntry[]> {
+  const d = await fetchJSON<{ entries: DirEntry[] }>(`${API}/cmd/list-dir`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agent_id: agentId, path }),
+  })
+  return d.entries || []
+}
+
+// 远程删除文件/目录（recursive=true 时递归删除目录）
+export async function deletePath(
+  agentId: string,
+  path: string,
+  recursive: boolean,
+): Promise<{ status: string }> {
+  return fetchJSON<{ status: string }>(`${API}/cmd/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agent_id: agentId, path, recursive }),
+  })
+}
+
+// 远程下载文件（流式，带进度回调）；totalSize 用于计算百分比（服务端为分块响应无 Content-Length）
+export async function downloadFile(
+  agentId: string,
+  path: string,
+  totalSize: number,
+  onProgress?: (loaded: number, total: number) => void,
+): Promise<{ blob: Blob; filename: string }> {
+  const token = localStorage.getItem('token') || ''
+  const qs = new URLSearchParams({ agent_id: agentId, path })
+  const resp = await fetch(`${API}/file/download?${qs.toString()}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!resp.ok) {
+    let msg = `HTTP ${resp.status}`
+    try {
+      const d = await resp.json()
+      if (d && typeof d.error === 'string' && d.error) msg = d.error
+    } catch { /* 非 JSON 错误体 */ }
+    throw new Error(msg)
+  }
+  const chunks: Uint8Array[] = []
+  let loaded = 0
+  const reader = resp.body?.getReader()
+  if (reader) {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (value) {
+        chunks.push(value)
+        loaded += value.length
+        onProgress?.(loaded, totalSize)
+      }
+    }
+  } else {
+    const buf = new Uint8Array(await resp.arrayBuffer())
+    chunks.push(buf)
+    loaded = buf.length
+    onProgress?.(loaded, totalSize)
+  }
+  // 文件名：优先 Content-Disposition 的 filename*=UTF-8'' 形式
+  let filename = path.split(/[\\/]/).pop() || 'download'
+  const cd = resp.headers.get('Content-Disposition') || ''
+  const m = cd.match(/filename\*=UTF-8''([^;]+)/i)
+  if (m) {
+    try { filename = decodeURIComponent(m[1]) } catch { /* 保留原名 */ }
+  }
+  return { blob: new Blob(chunks as BlobPart[]), filename }
+}
+
+// 远程上传文件（流式，带进度回调；XHR 才能拿到上传进度）
+export function uploadFile(
+  agentId: string,
+  destPath: string,
+  file: File,
+  overwrite: boolean,
+  onProgress?: (loaded: number, total: number) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const token = localStorage.getItem('token') || ''
+    const qs = new URLSearchParams({
+      agent_id: agentId,
+      path: destPath,
+      overwrite: overwrite ? '1' : '0',
+      size: String(file.size),
+    })
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', `${API}/file/upload?${qs.toString()}`)
+    xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream')
+    xhr.upload.onprogress = e => {
+      if (e.lengthComputable) onProgress?.(e.loaded, e.total)
+    }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve()
+      } else {
+        let msg = `HTTP ${xhr.status}`
+        try {
+          const d = JSON.parse(xhr.responseText)
+          if (d && typeof d.error === 'string' && d.error) msg = d.error
+        } catch { /* 非 JSON 错误体 */ }
+        reject(new Error(msg))
+      }
+    }
+    xhr.onerror = () => reject(new Error('网络错误，上传失败'))
+    xhr.onabort = () => reject(new Error('上传已取消'))
+    xhr.send(file)
+  })
+}
+
 export { API }

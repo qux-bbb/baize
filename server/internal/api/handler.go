@@ -14,15 +14,17 @@ import (
 
 	pb "github.com/qux-bbb/baize/proto/gen/go/baize/v1"
 	"github.com/qux-bbb/baize/server/internal/engine"
+	"github.com/qux-bbb/baize/server/internal/filexfer"
 	"github.com/qux-bbb/baize/server/internal/store"
 )
 
 type Handler struct {
-	store   *store.Store
-	cmdBus  *engine.CommandBus
-	cfg     *engine.ConfigManager
-	auth    *AuthManager
-	reg     *AgentRegistry
+	store  *store.Store
+	cmdBus *engine.CommandBus
+	cfg    *engine.ConfigManager
+	auth   *AuthManager
+	reg    *AgentRegistry
+	trans  *filexfer.Registry
 	// agentBinary: agent.exe 路径（--agent-binary），zip 打包下载用
 	agentBinary string
 	// publicAddr: Server 对外 gRPC 地址（--public-addr），下载页展示用
@@ -33,8 +35,8 @@ type Handler struct {
 	caFile string
 }
 
-func New(s *store.Store, cmdBus *engine.CommandBus, cfg *engine.ConfigManager, auth *AuthManager, reg *AgentRegistry, agentBinary, publicAddr, agentInstaller, caFile string) *Handler {
-	return &Handler{store: s, cmdBus: cmdBus, cfg: cfg, auth: auth, reg: reg, agentBinary: agentBinary, publicAddr: publicAddr, agentInstaller: agentInstaller, caFile: caFile}
+func New(s *store.Store, cmdBus *engine.CommandBus, cfg *engine.ConfigManager, auth *AuthManager, reg *AgentRegistry, trans *filexfer.Registry, agentBinary, publicAddr, agentInstaller, caFile string) *Handler {
+	return &Handler{store: s, cmdBus: cmdBus, cfg: cfg, auth: auth, reg: reg, trans: trans, agentBinary: agentBinary, publicAddr: publicAddr, agentInstaller: agentInstaller, caFile: caFile}
 }
 
 // ── 登录 ──────────────────────────────────────────────────
@@ -343,7 +345,7 @@ func (h *Handler) ConfigEventTypes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		AgentID    string         `json:"agent_id"`
+		AgentID    string          `json:"agent_id"`
 		Categories map[string]bool `json:"categories"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

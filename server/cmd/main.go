@@ -27,6 +27,7 @@ import (
 	pb "github.com/qux-bbb/baize/proto/gen/go/baize/v1"
 	"github.com/qux-bbb/baize/server/internal/api"
 	"github.com/qux-bbb/baize/server/internal/engine"
+	"github.com/qux-bbb/baize/server/internal/filexfer"
 	"github.com/qux-bbb/baize/server/internal/store"
 )
 
@@ -40,6 +41,7 @@ type baizeServer struct {
 	cmdBus   *engine.CommandBus
 	cfg      *engine.ConfigManager
 	registry *api.AgentRegistry
+	trans    *filexfer.Registry
 }
 
 // agentKeyFromContext 从 gRPC metadata 提取 Agent 身份密钥（baize-agent-key）
@@ -99,6 +101,7 @@ func (s *baizeServer) AgentStream(stream pb.BaizeService_AgentStreamServer) erro
 		}
 	})
 	defer s.cmdBus.Unregister(agentID)
+	defer s.trans.CloseAgent(agentID)
 
 	// 下发文件监控配置（主机级优先，无则用全局）
 	dirs := s.cfg.GetWatchDirs(agentID)
@@ -263,6 +266,81 @@ func (s *baizeServer) ReportCommandResult(ctx context.Context, result *pb.Comman
 	return &pb.Empty{}, nil
 }
 
+// FileTransferStream — 文件传输双向流（Agent 发起，每次传输一条流）。
+// Server 通过 gRPC metadata (x-agent-id, x-transfer-id, x-direction) 关联到注册表中的传输任务。
+//
+//	download (A→S): Agent 逐块推送, handler 写入 Transfer.chunks, HTTP 下载 handler 消费写出。
+//	upload   (S→A): 挂载 Send 函数到 Transfer, HTTP 上传 handler 边读请求体边写入流, Agent 落盘。
+func (s *baizeServer) FileTransferStream(stream pb.BaizeService_FileTransferStreamServer) error {
+	md, ok := metadata.FromIncomingContext(stream.Context())
+	if !ok {
+		return status.Error(codes.InvalidArgument, "missing metadata")
+	}
+	gid := firstMeta(md, "x-agent-id")
+	transferID := firstMeta(md, "x-transfer-id")
+	direction := firstMeta(md, "x-direction")
+	if gid == "" || transferID == "" {
+		return status.Error(codes.InvalidArgument, "missing agent_id/transfer_id")
+	}
+	tr, ok := s.trans.Get(transferID)
+	if !ok || tr.AgentID != gid {
+		// 找不到任务（可能已超时清理）或 agent 不匹配
+		return status.Error(codes.NotFound, "transfer not found")
+	}
+
+	log.Printf("[Transfer] Agent=%s task=%s direction=%s 开始", gid, transferID, direction)
+
+	switch direction {
+	case "upload":
+		// 挂载 Server → Agent 发送函数, 通知 HTTP handler 流已就绪
+		tr.SetSend(func(m *pb.FileChunk) error { return stream.Send(m) })
+		// Agent 的发送方向为空（本端只发不发）。保持流存活直到传输任务结束，
+		// 否则流一旦关闭, HTTP 上传 handler 将无法继续发送分块。
+		select {
+		case <-tr.Done():
+		case <-stream.Context().Done():
+		case <-time.After(30 * time.Minute): // 兜底, 防止 goroutine 永久挂起
+		}
+		log.Printf("[Transfer] Agent=%s task=%s direction=upload 流动结束", gid, transferID)
+
+	default: // download
+		// 接收 Agent 推送的分块, 转发给 HTTP 下载 handler
+		for {
+			select {
+			case <-tr.Done():
+				return nil
+			default:
+			}
+			chunk, err := stream.Recv()
+			if err != nil {
+				tr.SetErr(fmt.Errorf("Agent 传输流中断: %v", err))
+				return err
+			}
+			if chunk.GetError() != "" {
+				if !tr.PushChunk(chunk) {
+					return nil
+				}
+				return nil
+			}
+			if !tr.PushChunk(chunk) {
+				return nil
+			}
+			if chunk.GetLast() {
+				log.Printf("[Transfer] Agent=%s task=%s direction=download 完成", gid, transferID)
+				return nil
+			}
+		}
+	}
+	return nil
+}
+
+func firstMeta(md metadata.MD, key string) string {
+	if vals := md.Get(key); len(vals) > 0 {
+		return vals[0]
+	}
+	return ""
+}
+
 func initEngine(esStore *store.Store) *engine.Engine {
 	eng := engine.New(esStore)
 
@@ -373,13 +451,14 @@ func main() {
 	})))
 	cmdBus := engine.NewCommandBus()
 	cfg := engine.NewConfigManager()
-	pb.RegisterBaizeServiceServer(s, &baizeServer{es: bleveStore, engine: eng, cmdBus: cmdBus, cfg: cfg, registry: registry})
+	transRegistry := filexfer.NewRegistry()
+	pb.RegisterBaizeServiceServer(s, &baizeServer{es: bleveStore, engine: eng, cmdBus: cmdBus, cfg: cfg, registry: registry, trans: transRegistry})
 
 	// 启动 HTTP API + Dashboard Server
 	{
 		mux := http.NewServeMux()
 		if bleveStore != nil {
-			apiHandler := api.New(bleveStore, cmdBus, cfg, authManager, registry, *agentBinary, *publicAddr, *agentInstaller, caFile)
+			apiHandler := api.New(bleveStore, cmdBus, cfg, authManager, registry, transRegistry, *agentBinary, *publicAddr, *agentInstaller, caFile)
 			mux.HandleFunc("POST /api/login", apiHandler.Login)
 			mux.HandleFunc("POST /api/change-password", apiHandler.ChangePassword)
 			mux.HandleFunc("POST /api/logout", apiHandler.Logout)
@@ -406,6 +485,10 @@ func main() {
 			mux.HandleFunc("GET /api/systeminfo", apiHandler.SystemInfo)
 			mux.HandleFunc("GET /api/system-state", apiHandler.SystemState)
 			mux.HandleFunc("POST /api/cmd/kill", apiHandler.CmdKill)
+			mux.HandleFunc("POST /api/cmd/list-dir", apiHandler.CmdListDir)
+			mux.HandleFunc("POST /api/cmd/delete", apiHandler.CmdDelete)
+			mux.HandleFunc("GET /api/file/download", apiHandler.FileDownload)
+			mux.HandleFunc("POST /api/file/upload", apiHandler.FileUpload)
 		}
 		mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]string{"status": "ok"})

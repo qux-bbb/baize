@@ -23,6 +23,7 @@ const (
 	BaizeService_AgentStream_FullMethodName         = "/baize.v1.BaizeService/AgentStream"
 	BaizeService_ReportCommandResult_FullMethodName = "/baize.v1.BaizeService/ReportCommandResult"
 	BaizeService_Heartbeat_FullMethodName           = "/baize.v1.BaizeService/Heartbeat"
+	BaizeService_FileTransferStream_FullMethodName  = "/baize.v1.BaizeService/FileTransferStream"
 )
 
 // BaizeServiceClient is the client API for BaizeService service.
@@ -40,6 +41,11 @@ type BaizeServiceClient interface {
 	ReportCommandResult(ctx context.Context, in *CommandResult, opts ...grpc.CallOption) (*Empty, error)
 	// 单向: Agent 上报运行状态/健康检查
 	Heartbeat(ctx context.Context, in *AgentInfo, opts ...grpc.CallOption) (*Empty, error)
+	// 文件传输: Agent 发起, 每次传输一条流。Server 通过 metadata (x-agent-id, x-transfer-id, x-direction) 关联。
+	//
+	//	direction = "download" (A→S): Agent 流式推送文件分块
+	//	direction = "upload"   (S→A): Server 流式推送分块, Agent 落盘
+	FileTransferStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[FileChunk, FileChunk], error)
 }
 
 type baizeServiceClient struct {
@@ -93,6 +99,19 @@ func (c *baizeServiceClient) Heartbeat(ctx context.Context, in *AgentInfo, opts 
 	return out, nil
 }
 
+func (c *baizeServiceClient) FileTransferStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[FileChunk, FileChunk], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &BaizeService_ServiceDesc.Streams[1], BaizeService_FileTransferStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[FileChunk, FileChunk]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type BaizeService_FileTransferStreamClient = grpc.BidiStreamingClient[FileChunk, FileChunk]
+
 // BaizeServiceServer is the server API for BaizeService service.
 // All implementations must embed UnimplementedBaizeServiceServer
 // for forward compatibility.
@@ -108,6 +127,11 @@ type BaizeServiceServer interface {
 	ReportCommandResult(context.Context, *CommandResult) (*Empty, error)
 	// 单向: Agent 上报运行状态/健康检查
 	Heartbeat(context.Context, *AgentInfo) (*Empty, error)
+	// 文件传输: Agent 发起, 每次传输一条流。Server 通过 metadata (x-agent-id, x-transfer-id, x-direction) 关联。
+	//
+	//	direction = "download" (A→S): Agent 流式推送文件分块
+	//	direction = "upload"   (S→A): Server 流式推送分块, Agent 落盘
+	FileTransferStream(grpc.BidiStreamingServer[FileChunk, FileChunk]) error
 	mustEmbedUnimplementedBaizeServiceServer()
 }
 
@@ -129,6 +153,9 @@ func (UnimplementedBaizeServiceServer) ReportCommandResult(context.Context, *Com
 }
 func (UnimplementedBaizeServiceServer) Heartbeat(context.Context, *AgentInfo) (*Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method Heartbeat not implemented")
+}
+func (UnimplementedBaizeServiceServer) FileTransferStream(grpc.BidiStreamingServer[FileChunk, FileChunk]) error {
+	return status.Error(codes.Unimplemented, "method FileTransferStream not implemented")
 }
 func (UnimplementedBaizeServiceServer) mustEmbedUnimplementedBaizeServiceServer() {}
 func (UnimplementedBaizeServiceServer) testEmbeddedByValue()                      {}
@@ -212,6 +239,13 @@ func _BaizeService_Heartbeat_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _BaizeService_FileTransferStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(BaizeServiceServer).FileTransferStream(&grpc.GenericServerStream[FileChunk, FileChunk]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type BaizeService_FileTransferStreamServer = grpc.BidiStreamingServer[FileChunk, FileChunk]
+
 // BaizeService_ServiceDesc is the grpc.ServiceDesc for BaizeService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -236,6 +270,12 @@ var BaizeService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "AgentStream",
 			Handler:       _BaizeService_AgentStream_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "FileTransferStream",
+			Handler:       _BaizeService_FileTransferStream_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},

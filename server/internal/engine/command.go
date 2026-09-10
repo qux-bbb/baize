@@ -178,12 +178,61 @@ func (b *CommandBus) ExecuteSync(agentID string, cmd *pb.Command, timeout time.D
 	if err := b.SendToAgent(agentID, cmd); err != nil {
 		return nil, err
 	}
+	return b.WaitResult(cmd.GetCommandId(), timeout)
+}
+
+// WaitResult 等待指定指令的结果（用于"先下发再造流/喂数据"的场景，如文件上传）。
+func (b *CommandBus) WaitResult(commandID string, timeout time.Duration) (*pb.CommandResult, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if r, ok := b.getPendingResult(cmd.GetCommandId()); ok {
+		if r, ok := b.getPendingResult(commandID); ok {
 			return r, nil
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return nil, fmt.Errorf("指令超时（Agent %s 未在 %v 内回报结果）", agentID, timeout)
+	return nil, fmt.Errorf("指令超时（Agent 未在 %v 内回报结果）", timeout)
+}
+
+// BuildListDirCmd 组装列目录指令
+func BuildListDirCmd(dirPath string) *pb.Command {
+	return &pb.Command{
+		CommandId:  fmt.Sprintf("cmd-%d", time.Now().UnixNano()),
+		IssuedAtNs: uint64(time.Now().UnixNano()),
+		CommandType: &pb.Command_ListDir{
+			ListDir: &pb.ListDirCommand{DirPath: dirPath, Reason: "dashboard"},
+		},
+	}
+}
+
+// BuildDeletePathCmd 组装删除文件/目录指令
+func BuildDeletePathCmd(path string, recursive bool) *pb.Command {
+	return &pb.Command{
+		CommandId:  fmt.Sprintf("cmd-%d", time.Now().UnixNano()),
+		IssuedAtNs: uint64(time.Now().UnixNano()),
+		CommandType: &pb.Command_DeletePath{
+			DeletePath: &pb.DeletePathCommand{Path: path, Recursive: recursive, Reason: "dashboard"},
+		},
+	}
+}
+
+// BuildFileDownloadCmd 组装远程下载传输任务指令
+func BuildFileDownloadCmd(transferID, filePath string) *pb.Command {
+	return &pb.Command{
+		CommandId:  fmt.Sprintf("cmd-%d", time.Now().UnixNano()),
+		IssuedAtNs: uint64(time.Now().UnixNano()),
+		CommandType: &pb.Command_FileDownload{
+			FileDownload: &pb.FileDownloadCommand{TransferId: transferID, FilePath: filePath, Reason: "dashboard"},
+		},
+	}
+}
+
+// BuildFileUploadCmd 组装远程上传传输任务指令
+func BuildFileUploadCmd(transferID, destPath string, size uint64, overwrite bool) *pb.Command {
+	return &pb.Command{
+		CommandId:  fmt.Sprintf("cmd-%d", time.Now().UnixNano()),
+		IssuedAtNs: uint64(time.Now().UnixNano()),
+		CommandType: &pb.Command_FileUpload{
+			FileUpload: &pb.FileUploadCommand{TransferId: transferID, DestPath: destPath, Size: size, Overwrite: overwrite, Reason: "dashboard"},
+		},
+	}
 }

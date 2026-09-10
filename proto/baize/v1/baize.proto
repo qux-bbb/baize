@@ -234,11 +234,33 @@ message KillProcessCommand {
   string reason = 2;              // 原因
 }
 
-// 远程删除文件
-message DeleteFileCommand {
-  string file_path = 1;           // 目标文件路径
-  bool force = 2;                 // 是否强制删除 (如绕过回收站)
+// 远程删除文件/目录
+message DeletePathCommand {
+  string path = 1;                 // 目标文件或目录路径
+  bool recursive = 2;              // true = 递归删除目录; false = 仅文件, 遇到目录报错
   string reason = 3;
+}
+
+// 列出目录条目
+message ListDirCommand {
+  string dir_path = 1;             // 要列出的目录绝对路径
+  string reason = 2;
+}
+
+// 远程下载文件 (Agent → Server): 下发传输任务, Agent 另开 FileTransferStream 推送分块
+message FileDownloadCommand {
+  string transfer_id = 1;          // Server 生成, 用于流关联
+  string file_path = 2;            // 目标文件绝对路径
+  string reason = 3;
+}
+
+// 远程上传文件 (Server → Agent): 下发传输任务, 经 FileTransferStream 接收分块落盘
+message FileUploadCommand {
+  string transfer_id = 1;          // Server 生成, 用于流关联
+  string dest_path = 2;            // 目标文件绝对路径
+  uint64 size = 3;                 // 总字节数 (预检)
+  bool overwrite = 4;              // 目标已存在时 true 允许覆盖
+  string reason = 5;
 }
 
 // 远程执行脚本
@@ -271,11 +293,14 @@ message Command {
   oneof command_type {
     IsolateCommand isolate = 10;
     KillProcessCommand kill_process = 11;
-    DeleteFileCommand delete_file = 12;
+    DeletePathCommand delete_path = 12;
     ExecuteScriptCommand execute_script = 13;
     ConfigureFileWatchCommand configure_file_watch = 14;
     QuerySystemInfoCommand query_system_info = 15;
     ConfigureEventTypesCommand configure_event_types = 16;
+    ListDirCommand list_dir = 17;
+    FileUploadCommand file_upload = 18;
+    FileDownloadCommand file_download = 19;
   }
 }
 
@@ -292,8 +317,23 @@ message CommandResult {
   string command_id = 1;          // 对应的指令 ID
   bool success = 2;               // 是否成功
   string error_message = 3;       // 失败原因 (success=true 时可为空)
-  string output = 4;              // 脚本执行的标准输出 (仅 ExecuteScript)
+  string output = 4;              // 脚本执行的标准输出 (仅 ExecuteScript) / 列目录 JSON (仅 ListDir)
   uint64 completed_at_ns = 5;     // 完成时间
+  bytes data = 6;                 // 二进制回执 (当前未用, 预留; 大文件经 FileTransferStream 传输)
+}
+
+// ---------------------------------------------------------------------------
+// 7c. 文件传输分块
+//     大文件经 FileTransferStream (S->A 与 A->S 双向复用同一消息) 流式传输。
+//     分块大小 512KB, 以 last=true 结束; error 非空表示失败并立即中断。
+// ---------------------------------------------------------------------------
+
+message FileChunk {
+  string transfer_id = 1;         // 关联的传输任务 ID
+  uint64 seq = 2;                 // 序号 (从 0 递增)
+  bytes data = 3;                 // 分块数据 (可空, 仅用于 ack/结束标记)
+  bool last = 4;                  // true = 最后一个分块
+  string error = 5;               // 非空 = 传输失败, 携带错误消息
 }
 
 // ---------------------------------------------------------------------------
@@ -337,5 +377,10 @@ service BaizeService {
   rpc ReportCommandResult(CommandResult) returns (Empty);
 
   // 单向: Agent 上报运行状态/健康检查
-  rpc Heartbeat(AgentInfo) returns (Empty);
+    rpc Heartbeat(AgentInfo) returns (Empty);
+
+    // 文件传输: Agent 发起, 每次传输一条流。Server 通过 metadata (x-agent-id, x-transfer-id, x-direction) 关联。
+    //   direction = "download" (A→S): Agent 流式推送文件分块
+    //   direction = "upload"   (S→A): Server 流式推送分块, Agent 落盘
+    rpc FileTransferStream(stream FileChunk) returns (stream FileChunk);
 }

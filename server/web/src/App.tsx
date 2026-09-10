@@ -6,6 +6,7 @@ import LoginPage from './LoginPage'
 import ChangePasswordPage from './ChangePasswordPage'
 import ChangePasswordModal from './ChangePasswordModal'
 import { API, fetchJSON, initAuth, setAuth, clearAuth, isMustChangePassword, killProcess } from './api'
+import FileManager from './FileManager'
 import { BaizeGrid, SEV, formatTime, sevCell, linkCell, statusCell, timeFormatter, sevComparator, dateFilterParams } from './grid'
 import './config.css'
 
@@ -100,8 +101,8 @@ export default function App() {
   // 远程终止进程：确认弹窗 + 执行中状态（killConfirm 的 pid 来自进程快照）
   const [killConfirm, setKillConfirm] = useState<{ pid: number; name: string } | null>(null)
   const [killing, setKilling] = useState(false)
-  // 系统状态标签页：进程 / TCP 连接 / UDP 监听（默认进程）
-  const [sysTab, setSysTab] = useState<'procs' | 'tcp' | 'udp'>('procs')
+  // 系统状态标签页：进程 / TCP 连接 / UDP 监听 / 文件管理（默认进程）
+  const [sysTab, setSysTab] = useState<'procs' | 'tcp' | 'udp' | 'files'>('procs')
   const [searchQ, setSearchQ] = useState('')
   const [hostInput, setHostInput] = useState('')
   const [showChangePwd, setShowChangePwd] = useState(false)
@@ -540,14 +541,18 @@ export default function App() {
                 <button className="btn" onClick={refreshSysInfo} disabled={sysRefreshing} style={{fontSize:'0.75rem'}}>{sysRefreshing ? '刷新中...' : '刷新'}</button>
               </div>
               {sysErr && <div className="error" style={{marginBottom:'0.5rem'}}>{sysErr}</div>}
-              {sysLoading ? <div className="loading">加载系统状态...</div> : (
-              sysView ? (
-                <div>
-                  <div className="tabs" style={{ marginBottom: '0.6rem' }}>
-                    <button className={sysTab === 'procs' ? 'active' : ''} onClick={() => setSysTab('procs')}>进程 ({sysView.procs.length})</button>
-                    <button className={sysTab === 'tcp' ? 'active' : ''} onClick={() => setSysTab('tcp')}>TCP 连接 ({sysView.tcp.length})</button>
-                    <button className={sysTab === 'udp' ? 'active' : ''} onClick={() => setSysTab('udp')}>UDP 监听 ({sysView.udp.length})</button>
-                  </div>
+              <div className="tabs" style={{ marginBottom: '0.6rem' }}>
+                <button className={sysTab === 'procs' ? 'active' : ''} onClick={() => setSysTab('procs')}>进程 ({sysView?.procs.length ?? 0})</button>
+                <button className={sysTab === 'tcp' ? 'active' : ''} onClick={() => setSysTab('tcp')}>TCP 连接 ({sysView?.tcp.length ?? 0})</button>
+                <button className={sysTab === 'udp' ? 'active' : ''} onClick={() => setSysTab('udp')}>UDP 监听 ({sysView?.udp.length ?? 0})</button>
+                <button className={sysTab === 'files' ? 'active' : ''} onClick={() => setSysTab('files')}>📁 文件</button>
+              </div>
+              {sysTab === 'files' ? (
+                <FileManager agentId={host.agent_id} />
+              ) : sysLoading ? (
+                <div className="loading">加载系统状态...</div>
+              ) : sysView ? (
+                <>
                   {sysTab === 'procs' && (
                     <BaizeGrid columnDefs={procCols} rowData={sysView.procs} stateKey="baize.grid.procs" height={400} emptyText="无进程数据" />
                   )}
@@ -557,10 +562,9 @@ export default function App() {
                   {sysTab === 'udp' && (
                     <BaizeGrid columnDefs={udpCols} rowData={sysView.udp} stateKey="baize.grid.udp" height={400} emptyText="无 UDP 监听" />
                   )}
-                </div>
+                </>
               ) : (
                 <div className="empty">该主机暂无系统状态（Agent 未上线或版本过旧），可点击"刷新"获取当前状态</div>
-              )
               )}
             </div>
           </div>

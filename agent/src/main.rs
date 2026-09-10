@@ -639,83 +639,121 @@ async fn run(
                         info!("收到指令: {:?}", cmd);
 
         // 执行指令
-        if let Some(cmd_type) = &cmd.command_type {
-            use pb::command::CommandType;
-            let result = match cmd_type {
-                CommandType::Isolate(isolate_cmd) => {
-                    execute_isolate(isolate_cmd.isolate).map(|_| String::new())
-                }
-                CommandType::KillProcess(kill_cmd) => {
-                    execute_kill_process(kill_cmd.pid).map(|_| String::new())
-                }
-                CommandType::DeleteFile(del_cmd) => {
-                    execute_delete_file(&del_cmd.file_path, del_cmd.force).map(|_| String::new())
-                }
-                CommandType::ExecuteScript(script_cmd) => {
-                    execute_script(&script_cmd.script_content, &script_cmd.interpreter).map(|_| String::new())
-                }
-                CommandType::ConfigureFileWatch(fw_cmd) => {
-                    info!("[配置] 文件监控目录: {:?}", fw_cmd.watch_dirs);
-                    let dirs: Vec<String> = fw_cmd.watch_dirs.clone();
-                    // 记录目录（短持有锁）
-                    {
-                        let mut fc = collectors.file.lock().unwrap();
-                        fc.set_dirs(dirs.clone());
-                    }
-                    // 事件类型 file 开关开启时才启动
-                    if dirs.is_empty() {
-                        collectors.file.lock().unwrap().stop();
-                    } else if event_type_enabled(&collectors, "file") {
-                        if let Err(e) = collectors.file.lock().unwrap().start(dirs, tx.clone()) {
-                            error!("文件监控启动失败: {:?}", e);
+                if let Some(cmd_type) = &cmd.command_type {
+                    use pb::command::CommandType;
+                    // 是否后台异步传输任务（不在此处同步执行/上报，由后台任务经流/CommandResult 回报）
+                    let mut async_spawned = false;
+                    let result: Option<Result<String>> = match cmd_type {
+                        CommandType::Isolate(isolate_cmd) => {
+                            Some(execute_isolate(isolate_cmd.isolate).map(|_| String::new()))
                         }
-                    } else {
-                        info!("[配置] file 开关未开启，仅记录目录，等待开启后启动");
-                    }
-                    Ok(String::new())
-                }
-                CommandType::QuerySystemInfo(_) => {
-                    // 手动刷新：先上报系统状态（Server 覆盖落库，刷新 = 更新资产状态），
-                    // 再返回实时 JSON（Dashboard 展示用）
-                    let st = collect_system_state();
-                    info!(
-                        "[状态] 手动刷新上报: {} 进程, {} TCP, {} UDP",
-                        st.processes.len(),
-                        st.tcp_connections.len(),
-                        st.udp_endpoints.len()
-                    );
-                    let _ = tx.send(pb::Event {
-                        agent_info: None,
-                        sequence_id: 0,
-                        event_type: Some(pb::event::EventType::SystemState(st)),
-                    }).await;
-                    query_system_info()
-                }
-                CommandType::ConfigureEventTypes(et_cmd) => {
-                    info!("[配置] 事件类型开关: {:?}", et_cmd.categories);
-                    for (k, v) in &et_cmd.categories {
-                        apply_event_type(&collectors, k, *v, &tx);
-                    }
-                    Ok(String::new())
-                }
-            };
-
-            let (success, output, error_msg) = match result {
-                Ok(out) => (true, out, String::new()),
-                Err(e) => (false, String::new(), e.to_string()),
-            };
-            info!("指令 {} 执行结果: success={} error={}", cmd.command_id, success, error_msg);
-
-            // 上报执行结果
-            let result_msg = pb::CommandResult {
-                command_id: cmd.command_id.clone(),
-                success,
-                error_message: error_msg,
-                output,
-                completed_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64,
-            };
-            let _ = client.report_command_result(result_msg).await;
+                        CommandType::KillProcess(kill_cmd) => {
+                            Some(execute_kill_process(kill_cmd.pid).map(|_| String::new()))
                         }
+                        CommandType::DeletePath(del_cmd) => {
+                            Some(execute_delete_path(&del_cmd.path, del_cmd.recursive).map(|_| String::new()))
+                        }
+                        CommandType::ExecuteScript(script_cmd) => {
+                            Some(execute_script(&script_cmd.script_content, &script_cmd.interpreter).map(|_| String::new()))
+                        }
+                        CommandType::ConfigureFileWatch(fw_cmd) => {
+                            info!("[配置] 文件监控目录: {:?}", fw_cmd.watch_dirs);
+                            let dirs: Vec<String> = fw_cmd.watch_dirs.clone();
+                            // 记录目录（短持有锁）
+                            {
+                                let mut fc = collectors.file.lock().unwrap();
+                                fc.set_dirs(dirs.clone());
+                            }
+                            // 事件类型 file 开关开启时才启动
+                            if dirs.is_empty() {
+                                collectors.file.lock().unwrap().stop();
+                            } else if event_type_enabled(&collectors, "file") {
+                                if let Err(e) = collectors.file.lock().unwrap().start(dirs, tx.clone()) {
+                                    error!("文件监控启动失败: {:?}", e);
+                                }
+                            } else {
+                                info!("[配置] file 开关未开启，仅记录目录，等待开启后启动");
+                            }
+                            Some(Ok(String::new()))
+                        }
+                        CommandType::QuerySystemInfo(_) => {
+                            // 手动刷新：先上报系统状态（Server 覆盖落库，刷新 = 更新资产状态），
+                            // 再返回实时 JSON（Dashboard 展示用）
+                            let st = collect_system_state();
+                            info!(
+                                "[状态] 手动刷新上报: {} 进程, {} TCP, {} UDP",
+                                st.processes.len(),
+                                st.tcp_connections.len(),
+                                st.udp_endpoints.len()
+                            );
+                            let _ = tx.send(pb::Event {
+                                agent_info: None,
+                                sequence_id: 0,
+                                event_type: Some(pb::event::EventType::SystemState(st)),
+                            }).await;
+                            Some(query_system_info())
+                        }
+                        CommandType::ConfigureEventTypes(et_cmd) => {
+                            info!("[配置] 事件类型开关: {:?}", et_cmd.categories);
+                            for (k, v) in &et_cmd.categories {
+                                apply_event_type(&collectors, k, *v, &tx);
+                            }
+                            Some(Ok(String::new()))
+                        }
+                        CommandType::ListDir(ld_cmd) => {
+                            Some(execute_list_dir(&ld_cmd.dir_path))
+                        }
+                        CommandType::FileDownload(fd_cmd) => {
+                            let c = client.clone();
+                            let aid = agent_info.agent_id.clone();
+                            let tid = fd_cmd.transfer_id.clone();
+                            let path = fd_cmd.file_path.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = run_download(c, aid, &tid, &path).await {
+                                    error!("[传输] 下载失败 task={}: {:#}", tid, e);
+                                }
+                            });
+                            async_spawned = true;
+                            None
+                        }
+                        CommandType::FileUpload(fu_cmd) => {
+                            let c = client.clone();
+                            let aid = agent_info.agent_id.clone();
+                            let tid = fu_cmd.transfer_id.clone();
+                            let dest = fu_cmd.dest_path.clone();
+                            let overwrite = fu_cmd.overwrite;
+                            let cid = cmd.command_id.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = run_upload(c, aid, &tid, &dest, overwrite, &cid).await {
+                                    error!("[传输] 上传失败 task={}: {:#}", tid, e);
+                                }
+                            });
+                            async_spawned = true;
+                            None
+                        }
+                    };
+
+                    if async_spawned {
+                        info!("[传输] task={} 已交给后台任务（结果经流/CommandResult 回报）", cmd.command_id);
+                    } else if let Some(res) = result {
+                        let (success, output, error_msg) = match res {
+                            Ok(out) => (true, out, String::new()),
+                            Err(e) => (false, String::new(), e.to_string()),
+                        };
+                        info!("指令 {} 执行结果: success={} error={}", cmd.command_id, success, error_msg);
+
+                        // 上报执行结果
+                        let result_msg = pb::CommandResult {
+                            command_id: cmd.command_id.clone(),
+                            success,
+                            error_message: error_msg,
+                            output,
+                            completed_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64,
+                            data: Vec::new(),
+                        };
+                        let _ = client.report_command_result(result_msg).await;
+                    }
+                }
                     }
                     Ok(None) => {
                         info!("Server 流已关闭");
@@ -930,19 +968,114 @@ fn execute_kill_process(pid: u64) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 删除文件
-fn execute_delete_file(path: &str, force: bool) -> anyhow::Result<()> {
-    if cfg!(target_os = "windows") {
-        let mut cmd = StdCommand::new("del");
-        if force { cmd.arg("/F"); }
-        cmd.arg("/Q").arg(path).output()?;
+/// 删除文件或目录（永久删除，不可恢复）
+fn execute_delete_path(path: &str, recursive: bool) -> Result<String> {
+    let p = std::path::Path::new(path);
+    let meta = std::fs::symlink_metadata(p)
+        .map_err(|e| anyhow::anyhow!("无法访问 {}: {}", path, e))?;
+    if meta.is_dir() {
+        if !recursive {
+            anyhow::bail!("{} 是目录，删除目录需启用递归删除", path);
+        }
+        std::fs::remove_dir_all(p)
+            .map_err(|e| anyhow::anyhow!("递归删除 {} 失败: {}", path, e))?;
     } else {
-        let mut cmd = StdCommand::new("rm");
-        if force { cmd.arg("-f"); }
-        cmd.arg(path).output()?;
+        std::fs::remove_file(p)
+            .map_err(|e| anyhow::anyhow!("删除 {} 失败: {}", path, e))?;
     }
-    tracing::warn!("[响应] 已删除: {}", path);
-    Ok(())
+    tracing::warn!("[响应] 已永久删除: {}", path);
+    Ok(String::new())
+}
+
+/// 列出目录条目（目录优先、名称排序）。空路径 → Windows 返回驱动器列表 / Linux 返回根目录。
+fn execute_list_dir(dir_path: &str) -> Result<String> {
+    if dir_path.trim().is_empty() {
+        return list_roots();
+    }
+    let path = std::path::Path::new(dir_path);
+    if !path.is_dir() {
+        anyhow::bail!("{} 不是目录或不存在", dir_path);
+    }
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(path)
+        .map_err(|e| anyhow::anyhow!("读取目录 {} 失败: {}", dir_path, e))?
+    {
+        let entry = entry.map_err(|e| anyhow::anyhow!("读取条目失败: {}", e))?;
+        let ft = entry.file_type().map_err(|e| anyhow::anyhow!("获取条目类型失败: {}", e))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let full = entry.path().to_string_lossy().into_owned();
+        let (is_dir, size, modified) = if ft.is_dir() {
+            (true, 0i64, 0i64)
+        } else if ft.is_file() {
+            match entry.metadata() {
+                Ok(md) => {
+                    let size = md.len() as i64;
+                    let modified = md
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0);
+                    (false, size, modified)
+                }
+                Err(_) => continue,
+            }
+        } else {
+            // 符号链接等其它类型
+            (false, 0i64, 0i64)
+        };
+        entries.push(serde_json::json!({
+            "name": name,
+            "path": full,
+            "is_dir": is_dir,
+            "size": size,
+            "modified": modified,
+        }));
+    }
+    entries.sort_by(|a, b| {
+        let dir_a = a["is_dir"].as_bool().unwrap_or(false);
+        let dir_b = b["is_dir"].as_bool().unwrap_or(false);
+        dir_b.cmp(&dir_a).then_with(|| {
+            let na = a["name"].as_str().unwrap_or("");
+            let nb = b["name"].as_str().unwrap_or("");
+            na.to_lowercase().cmp(&nb.to_lowercase())
+        })
+    });
+    serde_json::to_string(&entries).map_err(|e| anyhow::anyhow!("序列化失败: {}", e))
+}
+
+/// 列出可浏览的根（Windows: 驱动器列表；其它平台: /）
+fn list_roots() -> Result<String> {
+    let mut entries = Vec::new();
+    #[cfg(windows)]
+    {
+        use windows::Win32::Storage::FileSystem::GetLogicalDrives;
+        let mask = unsafe { GetLogicalDrives() };
+        for i in 0..26u32 {
+            if mask & (1 << i) != 0 {
+                let letter = (b'A' + i as u8) as char;
+                let root = format!("{}:\\", letter);
+                entries.push(serde_json::json!({
+                    "name": root.clone(),
+                    "path": root,
+                    "is_dir": true,
+                    "size": 0i64,
+                    "modified": 0i64,
+                }));
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        entries.push(serde_json::json!({
+            "name": "/",
+            "path": "/",
+            "is_dir": true,
+            "size": 0i64,
+            "modified": 0i64,
+        }));
+    }
+    serde_json::to_string(&entries).map_err(|e| anyhow::anyhow!("序列化失败: {}", e))
 }
 
 /// 远程执行脚本
@@ -977,6 +1110,236 @@ fn execute_script(content: &str, interpreter: &str) -> anyhow::Result<()> {
         anyhow::bail!("脚本执行失败: {}", stderr);
     }
     tracing::warn!("[响应] 脚本执行成功: {} bytes", stdout.len());
+    Ok(())
+}
+
+// ── 文件传输（流式）──────────────────────────────────
+
+/// 传输分块大小（512KB）
+const TRANSFER_CHUNK_SIZE: usize = 512 * 1024;
+
+/// 上报指令执行结果（传输任务用）
+async fn report_transfer_result(
+    client: &mut BaizeServiceClient<tonic::transport::Channel>,
+    command_id: &str,
+    success: bool,
+    error_message: String,
+) {
+    let msg = pb::CommandResult {
+        command_id: command_id.to_string(),
+        success,
+        error_message,
+        output: String::new(),
+        completed_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64,
+        data: Vec::new(),
+    };
+    if let Err(e) = client.report_command_result(msg).await {
+        error!("[传输] 结果上报失败: {:?}", e);
+    }
+}
+
+/// 后台下载：读取文件 → 建 FileTransferStream 推送分块（A→S，真流式，内存恒定）
+async fn run_download(
+    mut client: BaizeServiceClient<tonic::transport::Channel>,
+    agent_id: String,
+    transfer_id: &str,
+    file_path: &str,
+) -> Result<()> {
+    use tokio::io::AsyncReadExt;
+
+    let tid = transfer_id.to_string();
+    let path_owned = file_path.to_string();
+    let stream = async_stream::stream! {
+        let mut file = match tokio::fs::File::open(&path_owned).await {
+            Ok(f) => f,
+            Err(e) => {
+                yield pb::FileChunk {
+                    transfer_id: tid.clone(),
+                    seq: 0,
+                    data: Vec::new(),
+                    last: true,
+                    error: format!("打开文件失败: {}", e),
+                };
+                return;
+            }
+        };
+        let mut buf = vec![0u8; TRANSFER_CHUNK_SIZE];
+        let mut seq: u64 = 0;
+        loop {
+            match file.read(&mut buf).await {
+                Ok(0) => {
+                    yield pb::FileChunk {
+                        transfer_id: tid.clone(),
+                        seq,
+                        data: Vec::new(),
+                        last: true,
+                        error: String::new(),
+                    };
+                    break;
+                }
+                Ok(n) => {
+                    yield pb::FileChunk {
+                        transfer_id: tid.clone(),
+                        seq,
+                        data: buf[..n].to_vec(),
+                        last: false,
+                        error: String::new(),
+                    };
+                    seq += 1;
+                }
+                Err(e) => {
+                    yield pb::FileChunk {
+                        transfer_id: tid.clone(),
+                        seq,
+                        data: Vec::new(),
+                        last: true,
+                        error: format!("读取文件失败: {}", e),
+                    };
+                    break;
+                }
+            }
+        }
+    };
+
+    let mut req = tonic::Request::new(stream);
+    req.metadata_mut().insert(
+        "x-agent-id",
+        tonic::metadata::MetadataValue::from_str(&agent_id)
+            .map_err(|e| anyhow::anyhow!("非法 agent_id: {}", e))?,
+    );
+    req.metadata_mut().insert(
+        "x-transfer-id",
+        tonic::metadata::MetadataValue::from_str(transfer_id)
+            .map_err(|e| anyhow::anyhow!("非法 transfer_id: {}", e))?,
+    );
+    req.metadata_mut()
+        .insert("x-direction", tonic::metadata::MetadataValue::from_static("download"));
+
+    let resp = client
+        .file_transfer_stream(req)
+        .await
+        .map_err(|e| anyhow::anyhow!("建立传输流失败: {}", e))?;
+    info!("[传输] 下载流已建立 task={} file={}", transfer_id, file_path);
+
+    // 消费 Server → Agent 方向（通常为空；Server 关闭流即结束）
+    let mut inbound = resp.into_inner();
+    while let Some(_chunk) = inbound
+        .message()
+        .await
+        .map_err(|e| anyhow::anyhow!("传输流错误: {}", e))?
+    {}
+
+    info!("[传输] 下载完成 task={} file={}", transfer_id, file_path);
+    Ok(())
+}
+
+/// 后台上传：建 FileTransferStream 接收分块 → 临时文件 → 原子重命名落盘（S→A）
+async fn run_upload(
+    mut client: BaizeServiceClient<tonic::transport::Channel>,
+    agent_id: String,
+    transfer_id: &str,
+    dest_path: &str,
+    overwrite: bool,
+    command_id: &str,
+) -> Result<()> {
+    use tokio::io::AsyncWriteExt;
+
+    // 目标已存在且未允许覆盖 → 直接失败
+    if !overwrite && tokio::fs::metadata(dest_path).await.is_ok() {
+        let msg = format!("目标已存在: {}（未允许覆盖）", dest_path);
+        report_transfer_result(&mut client, command_id, false, msg.clone()).await;
+        anyhow::bail!(msg);
+    }
+
+    // 自动创建父目录
+    if let Some(parent) = std::path::Path::new(dest_path).parent() {
+        if !parent.as_os_str().is_empty() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| anyhow::anyhow!("创建目录 {} 失败: {}", parent.display(), e))?;
+        }
+    }
+
+    // 建流（本端发送方向为空：只接收 Server 推来的分块）
+    let empty = futures::stream::empty::<pb::FileChunk>();
+    let mut req = tonic::Request::new(empty);
+    req.metadata_mut().insert(
+        "x-agent-id",
+        tonic::metadata::MetadataValue::from_str(&agent_id)
+            .map_err(|e| anyhow::anyhow!("非法 agent_id: {}", e))?,
+    );
+    req.metadata_mut().insert(
+        "x-transfer-id",
+        tonic::metadata::MetadataValue::from_str(transfer_id)
+            .map_err(|e| anyhow::anyhow!("非法 transfer_id: {}", e))?,
+    );
+    req.metadata_mut()
+        .insert("x-direction", tonic::metadata::MetadataValue::from_static("upload"));
+
+    let resp = client
+        .file_transfer_stream(req)
+        .await
+        .map_err(|e| anyhow::anyhow!("建立传输流失败: {}", e))?;
+    info!("[传输] 上传流已建立 task={} dest={}", transfer_id, dest_path);
+
+    let tmp_path = format!("{}.baize-upload-{}", dest_path, transfer_id);
+    let mut out = tokio::fs::File::create(&tmp_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("创建临时文件 {} 失败: {}", tmp_path, e))?;
+
+    let mut inbound = resp.into_inner();
+    let mut total: u64 = 0;
+    loop {
+        let msg = inbound.message().await;
+        match msg {
+            Ok(Some(chunk)) => {
+                if !chunk.error.is_empty() {
+                    drop(out);
+                    let _ = tokio::fs::remove_file(&tmp_path).await;
+                    let m = format!("传输失败: {}", chunk.error);
+                    report_transfer_result(&mut client, command_id, false, m.clone()).await;
+                    anyhow::bail!(m);
+                }
+                if !chunk.data.is_empty() {
+                    out.write_all(&chunk.data)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("写入临时文件失败: {}", e))?;
+                    total += chunk.data.len() as u64;
+                }
+                if chunk.last {
+                    break;
+                }
+            }
+            Ok(None) => {
+                drop(out);
+                let _ = tokio::fs::remove_file(&tmp_path).await;
+                let m = "传输中断：Server 提前关闭流".to_string();
+                report_transfer_result(&mut client, command_id, false, m.clone()).await;
+                anyhow::bail!(m);
+            }
+            Err(e) => {
+                drop(out);
+                let _ = tokio::fs::remove_file(&tmp_path).await;
+                let m = format!("传输流错误: {}", e);
+                report_transfer_result(&mut client, command_id, false, m.clone()).await;
+                anyhow::bail!(m);
+            }
+        }
+    }
+
+    out.flush()
+        .await
+        .map_err(|e| anyhow::anyhow!("刷新临时文件失败: {}", e))?;
+    drop(out);
+    tokio::fs::rename(&tmp_path, dest_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("重命名落盘失败: {}", e))?;
+
+    info!(
+        "[传输] 上传完成 task={} dest={} bytes={}",
+        transfer_id, dest_path, total
+    );
+    report_transfer_result(&mut client, command_id, true, String::new()).await;
     Ok(())
 }
 
