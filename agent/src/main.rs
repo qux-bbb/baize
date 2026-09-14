@@ -654,7 +654,34 @@ async fn run(
                             Some(execute_delete_path(&del_cmd.path, del_cmd.recursive).map(|_| String::new()))
                         }
                         CommandType::ExecuteScript(script_cmd) => {
-                            Some(execute_script(&script_cmd.script_content, &script_cmd.interpreter).map(|_| String::new()))
+                            // 后台异步执行：长命令不阻塞消息循环（心跳/事件上报/新指令接收不受影响）
+                            let mut c = client.clone();
+                            let cid = cmd.command_id.clone();
+                            let content = script_cmd.script_content.clone();
+                            let interp = script_cmd.interpreter.clone();
+                            let tsecs = script_cmd.timeout_secs;
+                            tokio::spawn(async move {
+                                let (success, output, error_msg) = match execute_script(&content, &interp, tsecs).await {
+                                    Ok(r) if r.exit_code == 0 => (true, r.output, String::new()),
+                                    // 非 0 退出码：输出照常回传，失败原因放在 error_message
+                                    Ok(r) => (false, r.output, format!("退出码 {}", r.exit_code)),
+                                    Err(e) => (false, String::new(), e.to_string()),
+                                };
+                                info!("[响应] 命令 {} 执行完成: success={} error={}", cid, success, error_msg);
+                                let result_msg = pb::CommandResult {
+                                    command_id: cid,
+                                    success,
+                                    error_message: error_msg,
+                                    output,
+                                    completed_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0) as u64,
+                                    data: Vec::new(),
+                                };
+                                if let Err(e) = c.report_command_result(result_msg).await {
+                                    error!("[响应] 命令结果上报失败: {:?}", e);
+                                }
+                            });
+                            async_spawned = true;
+                            None
                         }
                         CommandType::ConfigureFileWatch(fw_cmd) => {
                             info!("[配置] 文件监控目录: {:?}", fw_cmd.watch_dirs);
@@ -1078,39 +1105,141 @@ fn list_roots() -> Result<String> {
     serde_json::to_string(&entries).map_err(|e| anyhow::anyhow!("序列化失败: {}", e))
 }
 
-/// 远程执行脚本
-fn execute_script(content: &str, interpreter: &str) -> anyhow::Result<()> {
+/// 远程执行脚本/命令的返回
+struct ScriptResult {
+    /// stdout + stderr 合并后的输出（超过上限时已截断）
+    output: String,
+    /// 进程退出码（异常终止时为 -1）
+    exit_code: i32,
+}
+
+/// 解码子进程输出为字符串。
+///
+/// Windows 中文系统上 cmd/PowerShell 经管道输出的是本地代码页（GBK/936）字节，
+/// 直接按 UTF-8 解会把中文毁成 U+FFFD（数据在这一步就丢了）。
+/// 因此先严格试 UTF-8，失败再按系统 ANSI 代码页（CP_ACP，中文系统即 GBK）解码；
+/// 其他平台退回 lossy（UTF-8 为本地编码，无需回退）。
+#[cfg(windows)]
+fn decode_console_output(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+    if let Ok(s) = std::str::from_utf8(bytes) {
+        return s.to_string();
+    }
+    unsafe {
+        use windows::Win32::Globalization::{
+            MultiByteToWideChar, CP_ACP, MULTI_BYTE_TO_WIDE_CHAR_FLAGS,
+        };
+        let flags = MULTI_BYTE_TO_WIDE_CHAR_FLAGS(0);
+        // 第一次调用传 None 只为取所需宽字符数
+        let len = MultiByteToWideChar(CP_ACP, flags, bytes, None);
+        if len > 0 {
+            let mut buf = vec![0u16; len as usize];
+            let n = MultiByteToWideChar(CP_ACP, flags, bytes, Some(&mut buf));
+            if n > 0 {
+                buf.truncate(n as usize);
+                return String::from_utf16_lossy(&buf);
+            }
+        }
+        String::from_utf8_lossy(bytes).to_string()
+    }
+}
+
+#[cfg(not(windows))]
+fn decode_console_output(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).to_string()
+}
+
+/// 命令输出截断上限（64KB）：防止 `dir /s` 之类的海量输出打爆内存
+const SCRIPT_MAX_OUTPUT: usize = 64 * 1024;
+/// timeout_secs = 0 时使用的默认超时（秒）
+const SCRIPT_DEFAULT_TIMEOUT_SECS: u64 = 30;
+
+/// 远程执行脚本/命令
+///
+/// 与旧实现（同步 `std::process::Command::output()`）的差别：
+///   - 异步子进程 + 超时控制，不阻塞 Agent 消息循环；
+///   - 支持 timeout_secs（超时后经 kill_on_drop 终止子进程，不留孤儿）；
+///   - stdout/stderr 一并回传 Server（旧实现丢弃了 stdout，前端拿不到输出）。
+async fn execute_script(content: &str, interpreter: &str, timeout_secs: u32) -> anyhow::Result<ScriptResult> {
+    use tokio::process::Command as TokioCommand;
+
     let mut cmd = match interpreter {
         "powershell" => {
-            let mut c = StdCommand::new("powershell");
-            c.args(["-NoProfile", "-Command", content]);
+            let mut c = TokioCommand::new("powershell");
+            c.args(["-NoProfile", "-NonInteractive", "-Command", content]);
             c
         }
         "cmd" => {
-            let mut c = StdCommand::new("cmd");
+            let mut c = TokioCommand::new("cmd");
             c.args(["/C", content]);
             c
         }
         "bash" => {
-            let mut c = StdCommand::new("bash");
+            let mut c = TokioCommand::new("bash");
             c.args(["-c", content]);
             c
         }
         "python" => {
-            let mut c = StdCommand::new("python");
+            let mut c = TokioCommand::new("python");
             c.args(["-c", content]);
             c
         }
         _ => anyhow::bail!("不支持的脚本解释器: {}", interpreter),
     };
-    let output = cmd.output()?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("脚本执行失败: {}", stderr);
+
+    // 超时后子进程句柄 drop 时自动终止，避免命令还在后台跑
+    cmd.kill_on_drop(true);
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::piped());
+
+    let child = cmd
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("启动 {} 失败: {}", interpreter, e))?;
+
+    let wait_secs = if timeout_secs == 0 {
+        SCRIPT_DEFAULT_TIMEOUT_SECS
+    } else {
+        timeout_secs as u64
+    };
+    let out = match time::timeout(Duration::from_secs(wait_secs), child.wait_with_output()).await {
+        Ok(Ok(o)) => o,
+        Ok(Err(e)) => anyhow::bail!("等待进程结束失败: {}", e),
+        Err(_) => anyhow::bail!("执行超时（{} 秒），已终止子进程", wait_secs),
+    };
+
+    let exit_code = out.status.code().unwrap_or(-1);
+    let mut output = decode_console_output(&out.stdout);
+    let stderr = decode_console_output(&out.stderr);
+    if !stderr.trim().is_empty() {
+        if !output.is_empty() && !output.ends_with('\n') {
+            output.push('\n');
+        }
+        output.push_str(stderr.trim_end());
+        output.push('\n');
     }
-    tracing::warn!("[响应] 脚本执行成功: {} bytes", stdout.len());
-    Ok(())
+
+    let mut truncated = false;
+    if output.len() > SCRIPT_MAX_OUTPUT {
+        // 按 UTF-8 字符边界截断，避免切出非法字符串
+        let mut end = SCRIPT_MAX_OUTPUT;
+        while end > 0 && !output.is_char_boundary(end) {
+            end -= 1;
+        }
+        output.truncate(end);
+        output.push_str("\n…（输出已截断，仅保留前 64KB）");
+        truncated = true;
+    }
+
+    tracing::warn!(
+        "[响应] 命令执行完成: exit_code={} 输出 {} 字节{}",
+        exit_code,
+        output.len(),
+        if truncated { "（已截断）" } else { "" }
+    );
+
+    Ok(ScriptResult { output, exit_code })
 }
 
 // ── 文件传输（流式）──────────────────────────────────

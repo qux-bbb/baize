@@ -163,6 +163,27 @@ func BuildKillCmd(pid uint64) *pb.Command {
 	}
 }
 
+// BuildExecCmd 组装远程执行命令/脚本指令
+// interpreter 需为 powershell / cmd / bash / python（调用方已做白名单校验）
+// timeoutSecs = 0 表示由 Agent 按默认值（30 秒）处理
+func BuildExecCmd(script, interpreter string, timeoutSecs uint32, reason string) *pb.Command {
+	if reason == "" {
+		reason = "dashboard"
+	}
+	return &pb.Command{
+		CommandId:  fmt.Sprintf("cmd-%d", time.Now().UnixNano()),
+		IssuedAtNs: uint64(time.Now().UnixNano()),
+		CommandType: &pb.Command_ExecuteScript{
+			ExecuteScript: &pb.ExecuteScriptCommand{
+				ScriptContent: script,
+				Interpreter:   interpreter,
+				TimeoutSecs:   timeoutSecs,
+				Reason:        reason,
+			},
+		},
+	}
+}
+
 // IsolateAgent 隔离指定 Agent 主机（自动化响应）
 func (b *CommandBus) IsolateAgent(agentID string) {
 	cmd := BuildIsolateCmd(true)

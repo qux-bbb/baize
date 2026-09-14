@@ -487,6 +487,7 @@ func main() {
 			mux.HandleFunc("POST /api/cmd/kill", apiHandler.CmdKill)
 			mux.HandleFunc("POST /api/cmd/list-dir", apiHandler.CmdListDir)
 			mux.HandleFunc("POST /api/cmd/delete", apiHandler.CmdDelete)
+			mux.HandleFunc("POST /api/cmd/exec", apiHandler.CmdExec)
 			mux.HandleFunc("GET /api/file/download", apiHandler.FileDownload)
 			mux.HandleFunc("POST /api/file/upload", apiHandler.FileUpload)
 		}

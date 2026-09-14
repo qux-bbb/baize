@@ -93,6 +93,37 @@ export async function killProcess(agentId: string, pid: number): Promise<{ statu
   })
 }
 
+// 远程执行命令/脚本（同步等待执行结果；output 为 stdout+stderr 合并内容）
+export interface ExecResult {
+  success: boolean
+  output: string
+  error_message: string
+  elapsed_ms: number
+}
+
+// 支持的脚本解释器（与 Agent execute_script 保持一致）
+export type Interpreter = 'powershell' | 'cmd' | 'bash' | 'python'
+
+export async function execCommand(
+  agentId: string,
+  script: string,
+  interpreter: Interpreter,
+  timeoutSecs: number,
+  reason: string,
+): Promise<ExecResult> {
+  return fetchJSON<ExecResult>(`${API}/cmd/exec`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      agent_id: agentId,
+      script,
+      interpreter,
+      timeout_secs: timeoutSecs,
+      reason,
+    }),
+  })
+}
+
 // ── 文件管理 ──────────────────────────────────────────────
 
 export interface DirEntry {

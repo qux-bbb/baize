@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	pb "github.com/qux-bbb/baize/proto/gen/go/baize/v1"
@@ -251,4 +253,96 @@ func (h *Handler) FileUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// ── 远程执行命令 ──────────────────────────────────────────
+
+// execInterpreters 支持的脚本解释器白名单（与 Agent execute_script 保持一致）
+var execInterpreters = map[string]bool{
+	"powershell": true,
+	"cmd":        true,
+	"bash":       true,
+	"python":     true,
+}
+
+// execMaxTimeoutSecs 单条命令允许的最大执行超时（秒）
+const execMaxTimeoutSecs = 600
+
+// execLogScriptLimit 日志中命令内容的最大显示长度（rune 数）
+const execLogScriptLimit = 200
+
+// truncateForLog 截断超长命令，避免日志刷屏（按 rune 截断，不会切坏 UTF-8）
+func truncateForLog(s string) string {
+	r := []rune(s)
+	if len(r) <= execLogScriptLimit {
+		return s
+	}
+	return string(r[:execLogScriptLimit]) + "…(已截断)"
+}
+
+// CmdExec 远程执行命令/脚本（POST /api/cmd/exec）
+// body: {"agent_id":"...","script":"...","interpreter":"powershell","timeout_secs":30,"reason":"..."}
+// 返回: {"success":bool,"output":"...","error_message":"...","elapsed_ms":123}
+//
+// 错误约定（与 CmdKill 一致，但命令执行失败不算 HTTP 错误）：
+//   - 下发失败 / Agent 离线 / 等待超时 → 4xx
+//   - 命令本身执行失败（非 0 退出码）→ 200 + success=false + output（前端展示报错输出）
+func (h *Handler) CmdExec(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AgentID     string `json:"agent_id"`
+		Script      string `json:"script"`
+		Interpreter string `json:"interpreter"`
+		TimeoutSecs uint32 `json:"timeout_secs"`
+		Reason      string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.AgentID == "" {
+		writeErr(w, http.StatusBadRequest, "missing agent_id")
+		return
+	}
+	if strings.TrimSpace(req.Script) == "" {
+		writeErr(w, http.StatusBadRequest, "missing script")
+		return
+	}
+	if !execInterpreters[req.Interpreter] {
+		writeErr(w, http.StatusBadRequest, "unsupported interpreter: "+req.Interpreter)
+		return
+	}
+	if req.TimeoutSecs > execMaxTimeoutSecs {
+		req.TimeoutSecs = execMaxTimeoutSecs
+	}
+
+	username := UsernameFromContext(r.Context())
+	// 审计留痕：谁、对哪台主机、用什么解释器、执行了什么命令、为什么
+	log.Printf("[响应] 执行命令 user=%s agent=%s interpreter=%s timeout=%ds reason=%q script=%q",
+		username, req.AgentID, req.Interpreter, req.TimeoutSecs, req.Reason, truncateForLog(req.Script))
+
+	// 等待超时 = 命令超时 + 5s 缓冲（timeout_secs=0 时 Agent 侧按默认 30s 执行）
+	wait := 30 * time.Second
+	if req.TimeoutSecs > 0 {
+		wait = time.Duration(req.TimeoutSecs) * time.Second
+	}
+	wait += 5 * time.Second
+
+	started := time.Now()
+	res, err := h.cmdBus.ExecuteSync(req.AgentID, engine.BuildExecCmd(req.Script, req.Interpreter, req.TimeoutSecs, req.Reason), wait)
+	elapsed := time.Since(started)
+	if err != nil {
+		log.Printf("[响应] 执行命令下发失败 user=%s agent=%s 耗时=%v err=%v",
+			username, req.AgentID, elapsed.Round(time.Millisecond), err)
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	log.Printf("[响应] 执行命令完成 user=%s agent=%s success=%v error=%q 耗时=%v",
+		username, req.AgentID, res.GetSuccess(), res.GetErrorMessage(), elapsed.Round(time.Millisecond))
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success":       res.GetSuccess(),
+		"output":        res.GetOutput(),
+		"error_message": res.GetErrorMessage(),
+		"elapsed_ms":    elapsed.Milliseconds(),
+	})
 }

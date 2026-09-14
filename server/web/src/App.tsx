@@ -7,6 +7,7 @@ import ChangePasswordPage from './ChangePasswordPage'
 import ChangePasswordModal from './ChangePasswordModal'
 import { API, fetchJSON, initAuth, setAuth, clearAuth, isMustChangePassword, killProcess } from './api'
 import FileManager from './FileManager'
+import CommandPanel from './CommandPanel'
 import { BaizeGrid, SEV, formatTime, sevCell, linkCell, statusCell, timeFormatter, sevComparator, dateFilterParams } from './grid'
 import './config.css'
 
@@ -101,8 +102,8 @@ export default function App() {
   // 远程终止进程：确认弹窗 + 执行中状态（killConfirm 的 pid 来自进程快照）
   const [killConfirm, setKillConfirm] = useState<{ pid: number; name: string } | null>(null)
   const [killing, setKilling] = useState(false)
-  // 系统状态标签页：进程 / TCP 连接 / UDP 监听 / 文件管理（默认进程）
-  const [sysTab, setSysTab] = useState<'procs' | 'tcp' | 'udp' | 'files'>('procs')
+  // 系统状态标签页：进程 / TCP 连接 / UDP 监听 / 文件管理 / 命令执行（默认进程）
+  const [sysTab, setSysTab] = useState<'procs' | 'tcp' | 'udp' | 'files' | 'cmd'>('procs')
   const [searchQ, setSearchQ] = useState('')
   const [hostInput, setHostInput] = useState('')
   const [showChangePwd, setShowChangePwd] = useState(false)
@@ -546,9 +547,12 @@ export default function App() {
                 <button className={sysTab === 'tcp' ? 'active' : ''} onClick={() => setSysTab('tcp')}>TCP 连接 ({sysView?.tcp.length ?? 0})</button>
                 <button className={sysTab === 'udp' ? 'active' : ''} onClick={() => setSysTab('udp')}>UDP 监听 ({sysView?.udp.length ?? 0})</button>
                 <button className={sysTab === 'files' ? 'active' : ''} onClick={() => setSysTab('files')}>📁 文件</button>
+                <button className={sysTab === 'cmd' ? 'active' : ''} onClick={() => setSysTab('cmd')}>⚡ 命令</button>
               </div>
               {sysTab === 'files' ? (
                 <FileManager agentId={host.agent_id} />
+              ) : sysTab === 'cmd' ? (
+                <CommandPanel agentId={host.agent_id} hostname={host.hostname} osType={host.os_type} />
               ) : sysLoading ? (
                 <div className="loading">加载系统状态...</div>
               ) : sysView ? (
