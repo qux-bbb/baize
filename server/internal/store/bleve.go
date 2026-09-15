@@ -186,8 +186,11 @@ func New(path string) (*Store, error) {
 
 	var index bleve.Index
 	if _, err := os.Stat(path); err == nil {
-		// 打开已有索引
-		index, err = bleve.Open(path)
+		// 打开已有索引。
+		// bolt_timeout 必须显式设置：scorch 从该 config 取值作为 bolt 文件锁等待上限，
+		// 不设置即为 0，而 bbolt 在 Timeout==0 时是无限重试（永不超时），
+		// 索引被其他实例持有时会静默挂死在这里。
+		index, err = bleve.OpenUsing(path, map[string]interface{}{"bolt_timeout": "5s"})
 		if err != nil {
 			return nil, fmt.Errorf("打开索引失败: %w", err)
 		}

@@ -396,16 +396,28 @@ func main() {
 		defer logFile.Close()
 	}
 
+	// 端口占用检查（务必在存储初始化之前）：
+	// Bleve 索引文件被其他实例持有时，新实例会静默卡在文件锁上、既不监听端口也不退出，
+	// 所以先抢占端口，失败就带明确原因退出。
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
+	if err != nil {
+		log.Fatalf("gRPC 端口 %d 已被占用（可能已有 Baize Server 在运行）: %v", *port, err)
+	}
+	httpLn, err := net.Listen("tcp", fmt.Sprintf(":%d", *httpPort))
+	if err != nil {
+		_ = lis.Close()
+		log.Fatalf("HTTP 端口 %d 已被占用（可能已有 Baize Server 在运行）: %v", *httpPort, err)
+	}
+
 	// 初始化 Bleve 存储
 	log.Printf("[Store] 初始化 Bleve 索引...")
 	storePath := filepath.Join(*dataDir, "baize.bleve")
 	bleveStore, err := store.New(storePath)
 	if err != nil {
-		log.Printf("[Store] 初始化失败: %v（不影响 Server 启动）", err)
-	} else {
-		log.Printf("[Store] Bleve 索引就绪: %s", storePath)
-		defer bleveStore.Close()
+		log.Fatalf("[Store] 初始化失败: %v（索引可能被另一个 Baize Server 实例占用，请先结束旧实例）", err)
 	}
+	log.Printf("[Store] Bleve 索引就绪: %s", storePath)
+	defer bleveStore.Close()
 
 	// 初始化检测引擎
 	eng := initEngine(bleveStore)
@@ -440,10 +452,7 @@ func main() {
 		log.Fatalf("加载 Server 证书失败: %v", err)
 	}
 
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
-	if err != nil {
-		log.Fatalf("监听端口 %d 失败: %v", *port, err)
-	}
+	// 端口 lis / httpLn 已在启动早期抢占（见上方“端口占用检查”）
 
 	s := grpc.NewServer(grpc.Creds(credentials.NewTLS(&tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
@@ -517,12 +526,12 @@ func main() {
 			w.Write(data)
 		})
 		httpSrv := &http.Server{
-			Addr:    fmt.Sprintf(":%d", *httpPort),
+			// 监听地址由启动早期抢占的 httpLn 决定（Addr 只在 ListenAndServe 系列里生效）
 			Handler: api.CORSMiddleware(api.AuthMiddleware(authManager)(mux)),
 		}
 		go func() {
 			log.Printf("[HTTP] Dashboard + API: https://localhost:%d", *httpPort)
-			if err := httpSrv.ListenAndServeTLS(certFile, keyFile); err != nil && err != http.ErrServerClosed {
+			if err := httpSrv.ServeTLS(httpLn, certFile, keyFile); err != nil && err != http.ErrServerClosed {
 				log.Printf("[HTTP] 错误: %v", err)
 			}
 		}()
