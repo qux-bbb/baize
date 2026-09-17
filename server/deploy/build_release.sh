@@ -140,22 +140,31 @@ else
 fi
 
 # [6/4] 校验 + SHA256
+#   注意: 不要写成 `... | grep -q X`——grep -q 命中即退出会让上游命令收 SIGPIPE，
+#   set -o pipefail 会把整个管道判为失败，误报"缺文件"（间歇性，取决于管道缓冲时序，已踩）
 echo "[6/4] 校验与校验和..."
 tar tzf "$RELEASE/baize-server-$VERSION-linux-amd64.tar.gz" \
-  | grep -q "baize-server-$VERSION-linux-amd64/install_server.sh" \
+  | grep -F "baize-server-$VERSION-linux-amd64/install_server.sh" > /dev/null \
   || { echo "[错误] tar.gz 缺 install_server.sh"; exit 1; }
 tar tzf "$RELEASE/baize-server-$VERSION-linux-amd64.tar.gz" \
-  | grep -q "baize-server-$VERSION-linux-amd64/uninstall_server.sh" \
+  | grep -F "baize-server-$VERSION-linux-amd64/uninstall_server.sh" > /dev/null \
   || { echo "[错误] tar.gz 缺 uninstall_server.sh"; exit 1; }
 (cd "$RELEASE" && "$PYTHON_CMD" -m zipfile -l "baize-server-$VERSION-windows-amd64.zip") \
-  | grep -q "baize-server.exe" \
+  | grep -F "baize-server.exe" > /dev/null \
   || { echo "[错误] zip 缺 baize-server.exe"; exit 1; }
 if [[ -f "$AGENT_EXE" ]]; then
   (cd "$RELEASE" && "$PYTHON_CMD" -m zipfile -l "baize-agent-$VERSION-windows-amd64.zip") \
-    | grep -q "baize-agent.exe" \
+    | grep -F "baize-agent.exe" > /dev/null \
     || { echo "[错误] Agent zip 缺 baize-agent.exe"; exit 1; }
 fi
-(cd "$RELEASE" && sha256sum baize-server-$VERSION-* baize-agent-$VERSION-* > SHA256SUMS.txt)
+# 校验和：显式列文件（不可用 glob：release/ 里可能残留同版本号的 test 产物、甚至目录，
+#   会让 sha256sum 报 "Is a directory" 中断，或把无关条目混进 SHA256SUMS.txt）
+( cd "$RELEASE"
+  CHECK_FILES=( "baize-server-$VERSION-linux-amd64.tar.gz" "baize-server-$VERSION-windows-amd64.zip" )
+  if [[ -f "baize-agent-$VERSION-windows-amd64.zip" ]]; then
+    CHECK_FILES+=( "baize-agent-$VERSION-windows-amd64.zip" )
+  fi
+  sha256sum "${CHECK_FILES[@]}" > SHA256SUMS.txt )
 
 # [7/4] 发布到 GitHub Release（可选：BAIZE_RELEASE=1 触发，默认仅构建不发布）
 #    prefix: gh 已认证（gh auth login），且 repo 已存在（gh repo create）
