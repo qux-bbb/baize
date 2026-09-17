@@ -33,6 +33,7 @@ type AgentInfo struct {
 	IpAddresses   []string               `protobuf:"bytes,7,rep,name=ip_addresses,json=ipAddresses,proto3" json:"ip_addresses,omitempty"`       // 所有网卡 IP
 	BootTimeNs    uint64                 `protobuf:"varint,8,opt,name=boot_time_ns,json=bootTimeNs,proto3" json:"boot_time_ns,omitempty"`       // 系统启动时间戳 (纳秒)
 	Arch          string                 `protobuf:"bytes,9,opt,name=arch,proto3" json:"arch,omitempty"`                                        // x86_64 / aarch64
+	Isolated      bool                   `protobuf:"varint,10,opt,name=isolated,proto3" json:"isolated,omitempty"`                              // 当前是否处于网络隔离状态 (Agent 为权威源, 心跳上报)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -128,6 +129,13 @@ func (x *AgentInfo) GetArch() string {
 		return x.Arch
 	}
 	return ""
+}
+
+func (x *AgentInfo) GetIsolated() bool {
+	if x != nil {
+		return x.Isolated
+	}
+	return false
 }
 
 // 进程创建 — 最核心的检测数据源
@@ -1670,8 +1678,9 @@ func (x *Alert) GetSourceEvents() []*Event {
 // 隔离/解除隔离主机
 type IsolateCommand struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Isolate       bool                   `protobuf:"varint,1,opt,name=isolate,proto3" json:"isolate,omitempty"` // true = 隔离, false = 解除隔离
-	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`    // 原因描述
+	Isolate       bool                   `protobuf:"varint,1,opt,name=isolate,proto3" json:"isolate,omitempty"`                         // true = 隔离, false = 解除隔离
+	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`                            // 原因描述
+	TtlSeconds    uint32                 `protobuf:"varint,3,opt,name=ttl_seconds,json=ttlSeconds,proto3" json:"ttl_seconds,omitempty"` // 隔离自动解除倒计时 (秒), 0 = 不自动解除
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1718,6 +1727,13 @@ func (x *IsolateCommand) GetReason() string {
 		return x.Reason
 	}
 	return ""
+}
+
+func (x *IsolateCommand) GetTtlSeconds() uint32 {
+	if x != nil {
+		return x.TtlSeconds
+	}
+	return 0
 }
 
 // 远程杀进程
@@ -2787,7 +2803,7 @@ var File_baize_v1_baize_proto protoreflect.FileDescriptor
 
 const file_baize_v1_baize_proto_rawDesc = "" +
 	"\n" +
-	"\x14baize/v1/baize.proto\x12\bbaize.v1\"\x9f\x02\n" +
+	"\x14baize/v1/baize.proto\x12\bbaize.v1\"\xbb\x02\n" +
 	"\tAgentInfo\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1a\n" +
 	"\bhostname\x18\x02 \x01(\tR\bhostname\x12\x17\n" +
@@ -2799,7 +2815,9 @@ const file_baize_v1_baize_proto_rawDesc = "" +
 	"\fip_addresses\x18\a \x03(\tR\vipAddresses\x12 \n" +
 	"\fboot_time_ns\x18\b \x01(\x04R\n" +
 	"bootTimeNs\x12\x12\n" +
-	"\x04arch\x18\t \x01(\tR\x04arch\"\xcb\x02\n" +
+	"\x04arch\x18\t \x01(\tR\x04arch\x12\x1a\n" +
+	"\bisolated\x18\n" +
+	" \x01(\bR\bisolated\"\xcb\x02\n" +
 	"\x12ProcessCreateEvent\x12\x10\n" +
 	"\x03pid\x18\x01 \x01(\x04R\x03pid\x12\x1d\n" +
 	"\n" +
@@ -2954,10 +2972,12 @@ const file_baize_v1_baize_proto_rawDesc = "" +
 	"\bhostname\x18\t \x01(\tR\bhostname\x12\x19\n" +
 	"\bagent_id\x18\n" +
 	" \x01(\tR\aagentId\x124\n" +
-	"\rsource_events\x18\v \x03(\v2\x0f.baize.v1.EventR\fsourceEvents\"B\n" +
+	"\rsource_events\x18\v \x03(\v2\x0f.baize.v1.EventR\fsourceEvents\"c\n" +
 	"\x0eIsolateCommand\x12\x18\n" +
 	"\aisolate\x18\x01 \x01(\bR\aisolate\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason\">\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\x12\x1f\n" +
+	"\vttl_seconds\x18\x03 \x01(\rR\n" +
+	"ttlSeconds\">\n" +
 	"\x12KillProcessCommand\x12\x10\n" +
 	"\x03pid\x18\x01 \x01(\x04R\x03pid\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\"]\n" +

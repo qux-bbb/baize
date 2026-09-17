@@ -63,6 +63,7 @@ type hostState struct {
 	firstSeen string
 	lastSeen  string
 	count     uint64 // 已见过的事件最大 seq（= 事件数）
+	isolated  bool   // 网络隔离状态（只由心跳路径更新，事件路径不得覆盖）
 }
 
 // ── EventDoc 字段分组 ──────────────────────────────────────────────
@@ -287,6 +288,7 @@ type HostDoc struct {
 	FirstSeen    string   `json:"first_seen"`
 	LastSeen     string   `json:"last_seen"`
 	EventCount   uint64   `json:"event_count"`
+	Isolated     bool     `json:"isolated"`
 }
 
 // DeleteHost 删除主机资产文档（Agent 被移除时调用）：
@@ -351,6 +353,7 @@ func (s *Store) WriteHost(info *pb.AgentInfo, lastSeen string) error {
 		s.hostStates[agentID] = st
 	}
 	st.lastSeen = lastSeen
+	st.isolated = info.GetIsolated()
 	s.hostThrottle[agentID] = time.Now()
 
 	doc := &HostDoc{
@@ -365,6 +368,63 @@ func (s *Store) WriteHost(info *pb.AgentInfo, lastSeen string) error {
 		FirstSeen:    st.firstSeen,
 		LastSeen:     st.lastSeen,
 		EventCount:   st.count,
+		Isolated:     st.isolated,
+	}
+	return s.index.Index("host-"+agentID, doc)
+}
+
+// SetHostIsolated 命令确认成功后立即更新主机的隔离状态（不等下一次心跳）。
+//
+// 心跳仍是隔离状态的权威源（30s 一轮，会随后校正），这里只是把
+// "隔离命令已被 Agent 确认执行成功"这一确定信息立刻落库 ——
+// 否则 Dashboard 在心跳到达前会一直显示旧状态，用户只能手动刷新页面才看到「已隔离」。
+func (s *Store) SetHostIsolated(agentID string, isolated bool) error {
+	if agentID == "" {
+		return nil
+	}
+	// 先读现有文档字段（GetHostByID 只读索引，不持 hostMu，可安全先调用）
+	h, err := s.GetHostByID(agentID, false)
+	if err != nil {
+		return err
+	}
+	if h == nil {
+		return fmt.Errorf("主机不存在: %s", agentID)
+	}
+
+	s.hostMu.Lock()
+	defer s.hostMu.Unlock()
+
+	st := s.hostStates[agentID]
+	if st == nil {
+		st = s.getHostStateFromIndex(agentID)
+		if st == nil {
+			st = &hostState{}
+		}
+		s.hostStates[agentID] = st
+	}
+	st.isolated = isolated
+
+	firstSeen, lastSeen := st.firstSeen, st.lastSeen
+	if firstSeen == "" {
+		firstSeen = h.LastSeen
+	}
+	if lastSeen == "" {
+		lastSeen = h.LastSeen
+	}
+
+	doc := &HostDoc{
+		Type:         hostType,
+		AgentID:      agentID,
+		Hostname:     h.Hostname,
+		OSType:       h.OSType,
+		OSVersion:    h.OSVersion,
+		AgentVersion: h.AgentVersion,
+		Arch:         h.Arch,
+		IPAddresses:  h.Ips,
+		FirstSeen:    firstSeen,
+		LastSeen:     lastSeen,
+		EventCount:   uint64(h.EventCount),
+		Isolated:     isolated,
 	}
 	return s.index.Index("host-"+agentID, doc)
 }
@@ -420,6 +480,7 @@ func (s *Store) UpsertHostFromEvent(event *pb.Event) error {
 		FirstSeen:    st.firstSeen,
 		LastSeen:     st.lastSeen,
 		EventCount:   st.count,
+		Isolated:     st.isolated,
 	}
 	return s.index.Index("host-"+agentID, doc)
 }
@@ -445,6 +506,10 @@ func (s *Store) getHostStateFromIndex(agentID string) *hostState {
 			} else if n, err := strconv.ParseUint(strings.TrimSpace(string(v)), 10, 64); err == nil {
 				st.count = n
 			}
+		case "isolated":
+			// 索引层（index.Field.Value()）返回的是索引词条：bool 被索引为 "T"/"F"
+			s := strings.TrimSpace(string(f.Value()))
+			st.isolated = s == "T" || s == "true" || s == "1"
 		}
 	})
 	return st
@@ -492,7 +557,12 @@ func (s *Store) RebuildHosts() (int, error) {
 		s.hostMu.Lock()
 		st := s.hostStates[agentID]
 		if st == nil {
-			st = &hostState{firstSeen: lastSeen}
+			// 重启后先从已有索引文档恢复状态（含 isolated），
+			// 否则重建会把隔离状态覆盖成 false —— 离线的被隔离主机将失去解除入口
+			st = s.getHostStateFromIndex(agentID)
+			if st == nil {
+				st = &hostState{firstSeen: lastSeen}
+			}
 			s.hostStates[agentID] = st
 		}
 		st.lastSeen = lastSeen
@@ -511,6 +581,7 @@ func (s *Store) RebuildHosts() (int, error) {
 			FirstSeen:    st.firstSeen,
 			LastSeen:     st.lastSeen,
 			EventCount:   st.count,
+			Isolated:     st.isolated,
 		}
 		err = s.index.Index("host-"+agentID, doc)
 		s.hostMu.Unlock()
@@ -632,7 +703,7 @@ func formatNs(ns uint64) string {
 
 // SearchHosts 查询所有主机（查独立的主机文档 type:host，毫秒级）
 // SearchHosts / GetHostByID 共用的主机文档字段列表
-var hostSearchFields = []string{"agent_id", "hostname", "os_type", "os_version", "agent_version", "arch", "ip_addresses", "first_seen", "last_seen", "event_count"}
+var hostSearchFields = []string{"agent_id", "hostname", "os_type", "os_version", "agent_version", "arch", "ip_addresses", "first_seen", "last_seen", "event_count", "isolated"}
 
 func (s *Store) SearchHosts(onlineIDs ...[]string) ([]HostResult, error) {
 	online := make(map[string]bool)
@@ -669,6 +740,7 @@ func (s *Store) SearchHosts(onlineIDs ...[]string) ([]HostResult, error) {
 			AgentVersion: getFieldStr(hit.Fields, "agent_version"),
 			Arch:         getFieldStr(hit.Fields, "arch"),
 			Ips:          getFieldStrs(hit.Fields, "ip_addresses"),
+			Isolated:     getFieldBool(hit.Fields, "isolated"),
 		})
 	}
 	return hosts, nil
@@ -706,6 +778,7 @@ func (s *Store) GetHostByID(agentID string, online bool) (*HostResult, error) {
 		AgentVersion: getFieldStr(hit.Fields, "agent_version"),
 		Arch:         getFieldStr(hit.Fields, "arch"),
 		Ips:          getFieldStrs(hit.Fields, "ip_addresses"),
+		Isolated:     getFieldBool(hit.Fields, "isolated"),
 	}
 	return h, nil
 }
@@ -1082,6 +1155,7 @@ type HostResult struct {
 	Arch         string   `json:"arch"`
 	Ips          []string `json:"ips,omitempty"`
 	Revoked      bool     `json:"revoked,omitempty"` // 注册表吊销标记（hosts API 合并）
+	Isolated     bool     `json:"isolated"`          // 网络隔离状态（Agent 心跳上报）
 }
 
 type AlertResult struct {
@@ -1122,6 +1196,22 @@ func getFieldUint(fields map[string]interface{}, key string) uint64 {
 		}
 	}
 	return 0
+}
+
+// getFieldBool 读取布尔字段。
+// 注意：search.Fields 返回的是**存储层**的原始 JSON 值 —— bool 字段就是 Go 的 bool，
+// 不是索引层的 "T"/"F" 字符串（实测确认）。这里两种表示都兼容。
+func getFieldBool(fields map[string]interface{}, key string) bool {
+	if v, ok := fields[key]; ok {
+		switch b := v.(type) {
+		case bool:
+			return b
+		case string:
+			// 索引层表示：bleve 把 bool 索引为 "T"/"F"
+			return strings.TrimSpace(b) == "T"
+		}
+	}
+	return false
 }
 
 // getFieldStrs 读取数组字段（如 ip_addresses）

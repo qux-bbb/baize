@@ -1,5 +1,6 @@
 // Baize (白泽) Agent — Rust 版本
 mod collector;
+mod isolate;
 
 #[cfg(windows)]
 mod service;
@@ -66,6 +67,9 @@ struct Cli {
     /// 以 Windows 服务模式运行（由 SCM 调用）
     #[arg(long)]
     service: bool,
+    /// 解除本机网络隔离后退出（Agent 失联时的本地救援通道，需管理员权限）
+    #[arg(long)]
+    isolate_off: bool,
 }
 
 /// 初始化日志：stderr + 文件双写。
@@ -146,6 +150,13 @@ async fn main() -> Result<()> {
             return service::install().map_err(|e| anyhow::anyhow!("{}", e));
         }
         if cli.uninstall {
+            // 卸载前先解除隔离：否则本机残留无主的阻断规则（无法再通过 Dashboard 解除）
+            if isolate::is_active() {
+                match isolate::release() {
+                    Ok(()) => println!("已解除网络隔离"),
+                    Err(e) => tracing::warn!("[隔离] 卸载前解除隔离失败: {:?}", e),
+                }
+            }
             return service::uninstall().map_err(|e| anyhow::anyhow!("{}", e));
         }
         if cli.service {
@@ -153,7 +164,25 @@ async fn main() -> Result<()> {
             return service::run_as_service().map_err(|e| anyhow::anyhow!("{}", e));
         }
     }
+
+    // 本地解除隔离（Agent 失联时的现场救援通道）
+    if cli.isolate_off {
+        isolate::release()?;
+        println!("已解除网络隔离");
+        return Ok(());
+    }
+
     run_agent_loop(cli.server, cli.watch, cli.agent_id, cli.interval, cli.hostname).await
+}
+
+/// 从 Server 地址解析 gRPC 端口（用作隔离期间的管理通道白名单）。
+/// 例：http://192.168.1.10:50051 → 50051；未写端口时回落到默认端口。
+fn parse_server_port(server: &str) -> u16 {
+    server
+        .rsplit(':')
+        .next()
+        .and_then(|p| p.trim_end_matches('/').parse::<u16>().ok())
+        .unwrap_or(isolate::DEFAULT_SERVER_PORT)
 }
 
 /// exe 同目录的 agent.conf（JSON）。服务模式和前台模式都从可执行文件所在目录读取，
@@ -273,6 +302,12 @@ pub async fn run_agent_loop(
         .or_else(|| cfg.server.clone().filter(|s| !s.is_empty()))
         .unwrap_or_else(|| "http://127.0.0.1:50051".to_string());
 
+    // 管理通道白名单端口（隔离期间放行 Agent → Server）
+    let server_port = parse_server_port(&server);
+
+    // 系统重启后 WFP 过滤器不保留：本地状态若为"隔离中"，此处重新施加
+    isolate::reapply_if_needed();
+
     // 文件监控目录：CLI > 配置 > 默认（空，由 Server 下发）
     let watch: Vec<String> = if let Some(w) = cli_watch {
         if w.trim().is_empty() {
@@ -334,7 +369,22 @@ pub async fn run_agent_loop(
         ip_addresses: ips,
         boot_time_ns,
         arch: std::env::consts::ARCH.to_string(),
+        isolated: isolate::is_active(),
     };
+
+    // 隔离 TTL 到期自动解除（每 30 秒检查一次；ttl_seconds=0 表示不自动解除）
+    tokio::spawn(async move {
+        loop {
+            time::sleep(Duration::from_secs(30)).await;
+            let state = isolate::load_state();
+            if isolate::ttl_expired(&state) {
+                tracing::warn!("[隔离] TTL 到期，自动解除网络隔离");
+                if let Err(e) = isolate::release() {
+                    tracing::error!("[隔离] TTL 自动解除失败: {:?}", e);
+                }
+            }
+        }
+    });
 
     // 断线重连循环
     let watch_str = watch.join(",");
@@ -353,7 +403,7 @@ pub async fn run_agent_loop(
             info!("收到停止请求，Agent 退出");
             break;
         }
-        match run(&server, agent_info.clone(), &sys, interval_secs, &watch_str, cfg.ca.clone(), &agent_key, &auth_failed, &mut need_snapshot).await {
+        match run(&server, server_port, agent_info.clone(), &sys, interval_secs, &watch_str, cfg.ca.clone(), &agent_key, &auth_failed, &mut need_snapshot).await {
             Ok(()) => {
                 info!("连接正常结束，5 秒后重连...");
                 if sleep_interruptible(Duration::from_secs(5)).await {
@@ -509,6 +559,7 @@ async fn ensure_client_key(
 
 async fn run(
     server: &str,
+    server_port: u16,
     agent_info: AgentInfo,
     system: &Arc<tokio::sync::Mutex<System>>,
     interval_secs: u64,
@@ -614,7 +665,10 @@ async fn run(
         tokio::spawn(async move {
             loop {
                 time::sleep(Duration::from_secs(30)).await;
-                let mut req = Request::new(hb_info.clone());
+                // 心跳携带当前隔离状态（Agent 是隔离状态的权威源，Server 据此更新主机状态）
+                let mut info = hb_info.clone();
+                info.isolated = crate::isolate::is_active();
+                let mut req = Request::new(info);
                 if let Ok(v) = tonic::metadata::MetadataValue::from_str(&hb_key) {
                     req.metadata_mut().insert("baize-agent-key", v);
                 }
@@ -644,9 +698,12 @@ async fn run(
                     // 是否后台异步传输任务（不在此处同步执行/上报，由后台任务经流/CommandResult 回报）
                     let mut async_spawned = false;
                     let result: Option<Result<String>> = match cmd_type {
-                        CommandType::Isolate(isolate_cmd) => {
-                            Some(execute_isolate(isolate_cmd.isolate).map(|_| String::new()))
-                        }
+                        CommandType::Isolate(isolate_cmd) => Some(execute_isolate(
+                            isolate_cmd.isolate,
+                            isolate_cmd.ttl_seconds,
+                            &isolate_cmd.reason,
+                            server_port,
+                        )),
                         CommandType::KillProcess(kill_cmd) => {
                             Some(execute_kill_process(kill_cmd.pid).map(|_| String::new()))
                         }
@@ -961,23 +1018,35 @@ fn load_or_create_agent_id() -> (String, bool) {
 
 use std::process::Command as StdCommand;
 
-/// 隔离/解除隔离主机
-fn execute_isolate(isolate: bool) -> anyhow::Result<()> {
-    if cfg!(target_os = "windows") {
-        if isolate {
-            // 修改防火墙规则阻止所有出站连接
-            StdCommand::new("netsh")
-                .args(["advfirewall", "set", "allprofiles", "firewallpolicy", "blockinbound,blockoutbound"])
-                .output()?;
-            tracing::warn!("[响应] 主机已隔离（出站已阻断）");
-        } else {
-            StdCommand::new("netsh")
-                .args(["advfirewall", "set", "allprofiles", "firewallpolicy", "blockinbound,allowoutbound"])
-                .output()?;
-            tracing::warn!("[响应] 主机隔离已解除");
-        }
+/// 隔离/解除隔离主机（WFP 专属子层：默认全断 + 管理通道白名单）
+///
+/// 与"改系统防火墙默认策略"的区别：
+/// - 不碰用户/域组的防火墙配置（GPO 刷新覆盖不到）
+/// - 放行 Agent→Server 端口，隔离后断线重连仍能成功（不会把自己彻底掐死）
+/// - 解除 = 删自己的子层/过滤器，幂等且无残留
+fn execute_isolate(
+    isolate: bool,
+    ttl_seconds: u32,
+    reason: &str,
+    server_port: u16,
+) -> anyhow::Result<String> {
+    if isolate {
+        crate::isolate::apply(server_port, ttl_seconds, reason)?;
+        tracing::warn!("[响应] 主机已隔离（仅保留管理通道与 DNS）");
+        Ok(format!(
+            "已隔离：仅放行管理通道（Server 端口 {}）、DNS(53) 与 loopback，其余出站全部阻断{}",
+            server_port,
+            if ttl_seconds == 0 {
+                String::new()
+            } else {
+                format!("；{} 秒后自动解除", ttl_seconds)
+            }
+        ))
+    } else {
+        crate::isolate::release()?;
+        tracing::warn!("[响应] 主机隔离已解除");
+        Ok("已解除网络隔离".to_string())
     }
-    Ok(())
 }
 
 /// 杀进程

@@ -93,6 +93,27 @@ export async function killProcess(agentId: string, pid: number): Promise<{ statu
   })
 }
 
+// 网络隔离 / 解除隔离主机（Agent 端 WFP 子层：默认全断 + 管理通道白名单）
+export interface IsolateResult {
+  status: string
+  isolated: boolean
+  output: string
+}
+
+// ttlSeconds = 自动解除倒计时（秒），0 = 不自动解除；服务端会裁剪到 7 天上限
+export async function isolateHost(
+  agentId: string,
+  action: 'isolate' | 'release',
+  reason: string,
+  ttlSeconds: number,
+): Promise<IsolateResult> {
+  return fetchJSON<IsolateResult>(`${API}/cmd/isolate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ agent_id: agentId, action, reason, ttl_seconds: ttlSeconds }),
+  })
+}
+
 // 远程执行命令/脚本（同步等待执行结果；output 为 stdout+stderr 合并内容）
 export interface ExecResult {
   success: boolean

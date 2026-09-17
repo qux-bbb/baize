@@ -346,3 +346,69 @@ func (h *Handler) CmdExec(w http.ResponseWriter, r *http.Request) {
 		"elapsed_ms":    elapsed.Milliseconds(),
 	})
 }
+
+// ── 网络隔离 ──────────────────────────────────────────────
+
+// isolateMaxTTLSeconds 隔离自动解除倒计时上限（7 天，对标 MDE）
+const isolateMaxTTLSeconds = 7 * 24 * 3600
+
+// CmdIsolate 隔离 / 解除隔离主机（POST /api/cmd/isolate）
+// body: {"agent_id":"...","action":"isolate"|"release","reason":"...","ttl_seconds":604800}
+// 返回: {"status":"ok","isolated":true,"output":"..."}
+//
+// 隔离由 Agent 端 WFP 子层实现（默认全断 + 管理通道白名单）。
+// 与 kill/exec 一致的错误约定：下发失败/Agent 离线/超时 → 4xx；Agent 执行失败 → 5xx + 原因。
+func (h *Handler) CmdIsolate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AgentID    string `json:"agent_id"`
+		Action     string `json:"action"`
+		Reason     string `json:"reason"`
+		TTLSeconds uint32 `json:"ttl_seconds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if req.AgentID == "" {
+		writeErr(w, http.StatusBadRequest, "missing agent_id")
+		return
+	}
+	if req.Action != "isolate" && req.Action != "release" {
+		writeErr(w, http.StatusBadRequest, "invalid action (isolate|release)")
+		return
+	}
+	isolate := req.Action == "isolate"
+	if req.TTLSeconds > isolateMaxTTLSeconds {
+		req.TTLSeconds = isolateMaxTTLSeconds
+	}
+
+	username := UsernameFromContext(r.Context())
+	// 审计留痕：谁、对哪台主机、隔离还是解除、为什么、多久自动解除
+	log.Printf("[响应] 网络隔离 user=%s agent=%s action=%s ttl=%ds reason=%q",
+		username, req.AgentID, req.Action, req.TTLSeconds, req.Reason)
+
+	res, err := h.cmdBus.ExecuteSync(req.AgentID, engine.BuildIsolateCmd(isolate, req.Reason, req.TTLSeconds), 30*time.Second)
+	if err != nil {
+		log.Printf("[响应] 网络隔离下发失败 user=%s agent=%s action=%s err=%v", username, req.AgentID, req.Action, err)
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !res.GetSuccess() {
+		log.Printf("[响应] 网络隔离执行失败 user=%s agent=%s action=%s err=%q", username, req.AgentID, req.Action, res.GetErrorMessage())
+		writeErr(w, http.StatusInternalServerError, res.GetErrorMessage())
+		return
+	}
+	log.Printf("[响应] 网络隔离完成 user=%s agent=%s action=%s", username, req.AgentID, req.Action)
+
+	// 命令已被 Agent 确认执行成功 → 立即落库隔离状态，Dashboard 无需等 30s 心跳即可看到变化
+	// （心跳仍是权威源，会在下一轮校正；这里失败只记日志，不影响命令结果）
+	if err := h.store.SetHostIsolated(req.AgentID, isolate); err != nil {
+		log.Printf("[响应] 更新主机隔离状态失败 agent=%s isolated=%v err=%v", req.AgentID, isolate, err)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"status":   "ok",
+		"isolated": isolate,
+		"output":   res.GetOutput(),
+	})
+}

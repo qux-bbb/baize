@@ -24,6 +24,7 @@ message AgentInfo {
   repeated string ip_addresses = 7;  // 所有网卡 IP
   uint64 boot_time_ns = 8;        // 系统启动时间戳 (纳秒)
   string arch = 9;                // x86_64 / aarch64
+  bool isolated = 10;             // 当前是否处于网络隔离状态 (Agent 为权威源, 心跳上报)
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +227,7 @@ message Alert {
 message IsolateCommand {
   bool isolate = 1;               // true = 隔离, false = 解除隔离
   string reason = 2;              // 原因描述
+  uint32 ttl_seconds = 3;         // 隔离自动解除倒计时 (秒), 0 = 不自动解除
 }
 
 // 远程杀进程

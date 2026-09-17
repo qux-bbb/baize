@@ -5,7 +5,7 @@ import AgentDownload from './AgentDownload'
 import LoginPage from './LoginPage'
 import ChangePasswordPage from './ChangePasswordPage'
 import ChangePasswordModal from './ChangePasswordModal'
-import { API, fetchJSON, initAuth, setAuth, clearAuth, isMustChangePassword, killProcess } from './api'
+import { API, fetchJSON, initAuth, setAuth, clearAuth, isMustChangePassword, killProcess, isolateHost } from './api'
 import FileManager from './FileManager'
 import CommandPanel from './CommandPanel'
 import { BaizeGrid, SEV, formatTime, sevCell, linkCell, statusCell, timeFormatter, sevComparator, dateFilterParams } from './grid'
@@ -14,7 +14,7 @@ import './config.css'
 interface Host {
   agent_id: string; hostname: string; os_type: string; os_version: string;
   arch: string; agent_version: string; event_count: number; last_seen: string;
-  ips?: string[]; is_online: boolean; revoked?: boolean;
+  ips?: string[]; is_online: boolean; revoked?: boolean; isolated?: boolean;
 }
 
 interface Alert {
@@ -110,9 +110,14 @@ export default function App() {
   const [exportConfirm, setExportConfirm] = useState<{ kind: 'events' | 'alerts' } | null>(null)
   const [exporting, setExporting] = useState(false)
   // 主机行操作菜单（⋯ 按钮 → 查看详情 / 移除 Agent）+ 移除确认
-  const [rowMenu, setRowMenu] = useState<{ agentId: string; hostname: string; x: number; y: number } | null>(null)
+  const [rowMenu, setRowMenu] = useState<{ agentId: string; hostname: string; isolated: boolean; x: number; y: number } | null>(null)
   const [removeConfirm, setRemoveConfirm] = useState<{ agentId: string; hostname: string } | null>(null)
   const [removing, setRemoving] = useState(false)
+  // 网络隔离确认弹窗（isolate=false 表示解除隔离）
+  const [isolateConfirm, setIsolateConfirm] = useState<{ agentId: string; hostname: string; isolate: boolean } | null>(null)
+  const [isolating, setIsolating] = useState(false)
+  const [isolateReason, setIsolateReason] = useState('')
+  const [isolateTTL, setIsolateTTL] = useState(7 * 24 * 3600) // 秒；0 = 不自动解除
   const [notice, setNotice] = useState('')
 
   // 认证事件监听
@@ -325,13 +330,38 @@ export default function App() {
     }
   }
 
+  // 网络隔离 / 解除隔离：下发 WFP 子层隔离指令，同步等待 Agent 执行结果
+  // （耗时操作：按钮置 loading，失败原因直接展示）
+  async function doIsolate() {
+    if (!isolateConfirm) return
+    setIsolating(true); setErr(''); setNotice('')
+    try {
+      const r = await isolateHost(
+        isolateConfirm.agentId,
+        isolateConfirm.isolate ? 'isolate' : 'release',
+        isolateReason,
+        isolateConfirm.isolate ? isolateTTL : 0,
+      )
+      setNotice(r.output || (isolateConfirm.isolate
+        ? `已隔离 ${isolateConfirm.hostname}`
+        : `已解除 ${isolateConfirm.hostname} 的网络隔离`))
+      setIsolateConfirm(null); setIsolateReason('')
+      setTimeout(() => setNotice(''), 8000)
+      load() // 刷新列表（状态列随后由 Agent 心跳同步）
+    } catch (e: any) {
+      setErr((isolateConfirm.isolate ? '隔离失败: ' : '解除隔离失败: ') + (e.message || e))
+    } finally {
+      setIsolating(false)
+    }
+  }
+
   const host = route.page === 'host-detail' ? hostDetail : null
 
   // ── 表格列定义（AG Grid；列宽/排序/显隐状态按 stateKey 持久化）──
 
   const hostCols = useMemo<ColDef<Host>[]>(() => [
     { headerName: '主机名', field: 'hostname', flex: 1.2, cellStyle: { fontWeight: 600 }, tooltipField: 'hostname' },
-    { headerName: '状态', colId: 'status', width: 110, valueGetter: p => (p.data!.revoked ? 2 : p.data!.is_online ? 1 : 0), cellRenderer: statusCell, filter: true, filterValueGetter: p => (p.data!.revoked ? '已吊销' : p.data!.is_online ? '在线' : '离线') },
+    { headerName: '状态', colId: 'status', width: 110, valueGetter: p => (p.data!.revoked ? 3 : p.data!.isolated ? 2 : p.data!.is_online ? 1 : 0), cellRenderer: statusCell, filter: true, filterValueGetter: p => (p.data!.revoked ? '已吊销' : p.data!.isolated ? '已隔离' : p.data!.is_online ? '在线' : '离线') },
     { headerName: 'OS', colId: 'os', flex: 1, valueGetter: p => `${p.data!.os_type} ${p.data!.os_version}` },
     { headerName: '架构', field: 'arch', width: 90 },
     { headerName: 'Agent', field: 'agent_version', width: 110 },
@@ -345,7 +375,7 @@ export default function App() {
         onClick={(e) => {
           e.stopPropagation()
           const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
-          setRowMenu({ agentId: p.data!.agent_id, hostname: p.data!.hostname, x: r.right - 132, y: r.bottom + 4 })
+          setRowMenu({ agentId: p.data!.agent_id, hostname: p.data!.hostname, isolated: !!p.data!.isolated, x: r.right - 132, y: r.bottom + 4 })
         }}
       >⋯</button>
     ) },
@@ -488,7 +518,7 @@ export default function App() {
                 if (t && t.closest('.row-menu-btn')) return
                 navigate('hosts/' + e.data!.agent_id)
               }}
-              rowClassRules={{ 'row-revoked': p => !!p.data?.revoked }}
+              rowClassRules={{ 'row-revoked': p => !!p.data?.revoked, 'row-isolated': p => !!p.data?.isolated && !p.data?.revoked }}
               emptyText="暂无在线主机"
             />
           </>
@@ -528,6 +558,9 @@ export default function App() {
             </div>
             <div className="detail-actions">
               <button className="btn" onClick={() => navigate('events?host=' + host.hostname)}>查看事件</button>
+              {host.isolated
+                ? <button className="btn" onClick={() => { setIsolateConfirm({ agentId: host.agent_id, hostname: host.hostname, isolate: false }); setIsolateReason('') }}>解除隔离</button>
+                : <button className="btn btn-danger" onClick={() => { setIsolateConfirm({ agentId: host.agent_id, hostname: host.hostname, isolate: true }); setIsolateReason('') }}>隔离主机</button>}
             </div>
             <div style={{marginTop:'1rem'}}>
               <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'0.5rem', flexWrap:'wrap', gap:'0.5rem'}}>
@@ -687,6 +720,9 @@ export default function App() {
       {rowMenu && (
         <div className="row-menu" style={{ left: rowMenu.x, top: rowMenu.y }} onClick={e => e.stopPropagation()}>
           <div className="row-menu-item" onClick={() => { setRowMenu(null); navigate('hosts/' + rowMenu.agentId) }}>查看详情</div>
+          {rowMenu.isolated
+            ? <div className="row-menu-item" onClick={() => { setIsolateConfirm({ agentId: rowMenu.agentId, hostname: rowMenu.hostname, isolate: false }); setIsolateReason(''); setRowMenu(null) }}>解除隔离</div>
+            : <div className="row-menu-item danger" onClick={() => { setIsolateConfirm({ agentId: rowMenu.agentId, hostname: rowMenu.hostname, isolate: true }); setIsolateReason(''); setRowMenu(null) }}>隔离主机</div>}
           <div className="row-menu-item danger" onClick={() => { setRemoveConfirm({ agentId: rowMenu.agentId, hostname: rowMenu.hostname }); setRowMenu(null) }}>移除 Agent</div>
         </div>
       )}
@@ -706,6 +742,47 @@ export default function App() {
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', padding: '0 1rem 1rem' }}>
               <button className="btn" onClick={() => setRemoveConfirm(null)} disabled={removing}>取消</button>
               <button className="btn btn-danger" onClick={doRemoveAgent} disabled={removing}>{removing ? '移除中...' : '确认移除'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* 网络隔离 / 解除隔离确认弹窗 */}
+      {isolateConfirm && (
+        <div className="overlay" onClick={() => !isolating && setIsolateConfirm(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '480px' }}>
+            <div className="modal-header">
+              <strong>{isolateConfirm.isolate ? '隔离主机' : '解除隔离'}</strong>
+              <button className="close" onClick={() => !isolating && setIsolateConfirm(null)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="field"><label>主机</label><span>{isolateConfirm.hostname}</span></div>
+              <div className="field"><label>Agent ID</label><span className="mono">{isolateConfirm.agentId}</span></div>
+              {isolateConfirm.isolate ? (
+                <>
+                  <div className="field"><label>影响</label><span>该主机所有对外网络通信将被阻断（含内网横向），仅保留与 Server 的管理通道、DNS 与本地回环。隔离在 Agent 进程退出/系统重启后仍会保持。</span></div>
+                  <div className="field">
+                    <label>自动解除</label>
+                    <select className="input" value={isolateTTL} onChange={e => setIsolateTTL(Number(e.target.value))}>
+                      <option value={7 * 24 * 3600}>7 天后自动解除</option>
+                      <option value={24 * 3600}>24 小时后自动解除</option>
+                      <option value={3600}>1 小时后自动解除</option>
+                      <option value={0}>不自动解除（只能手动解除）</option>
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>原因</label>
+                    <input className="input" placeholder="可选，用于审计留痕" value={isolateReason} onChange={e => setIsolateReason(e.target.value)} />
+                  </div>
+                </>
+              ) : (
+                <div className="field"><label>影响</label><span>恢复该主机的全部网络通信。</span></div>
+              )}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', padding: '0 1rem 1rem' }}>
+              <button className="btn" onClick={() => setIsolateConfirm(null)} disabled={isolating}>取消</button>
+              <button className={isolateConfirm.isolate ? 'btn btn-danger' : 'btn'} onClick={doIsolate} disabled={isolating}>
+                {isolating ? '执行中...' : isolateConfirm.isolate ? '确认隔离' : '确认解除'}
+              </button>
             </div>
           </div>
         </div>

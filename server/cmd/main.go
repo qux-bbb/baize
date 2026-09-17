@@ -499,22 +499,11 @@ func main() {
 			mux.HandleFunc("POST /api/cmd/exec", apiHandler.CmdExec)
 			mux.HandleFunc("GET /api/file/download", apiHandler.FileDownload)
 			mux.HandleFunc("POST /api/file/upload", apiHandler.FileUpload)
+			// 网络隔离 / 解除隔离（Agent 端 WFP 子层实现，同步等待结果）
+			mux.HandleFunc("POST /api/cmd/isolate", apiHandler.CmdIsolate)
 		}
 		mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
 			json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-		})
-		// 手动验证指令下发
-		mux.HandleFunc("GET /api/cmd/isolate", func(w http.ResponseWriter, r *http.Request) {
-			agentID := r.URL.Query().Get("agent_id")
-			if agentID == "" {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(400)
-				json.NewEncoder(w).Encode(map[string]string{"error": "missing agent_id"})
-				return
-			}
-			cmdBus.IsolateAgent(agentID)
-			log.Printf("[API] 手动隔离: %s", agentID)
-			json.NewEncoder(w).Encode(map[string]string{"status": "sent", "agent": agentID})
 		})
 		// 内嵌 Dashboard 静态文件
 		webSub, _ := fs.Sub(webFS, "web")

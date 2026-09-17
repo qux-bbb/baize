@@ -39,6 +39,8 @@ h1 { font-family: var(--font); font-size: 1.25rem; font-weight: 700; }
 .badge { font-size: 0.65rem; padding: 1px 6px; border-radius: 8px; margin-left: 6px; }
 .badge.online { background: #d1fae5; color: #065f46; }
 .badge.offline { background: #e5e7eb; color: #6b7280; }
+.dot.amber { background: #f59e0b; }
+.badge.isolated { background: #fef3c7; color: #92400e; }
 .ago { font-size: 0.75rem; color: var(--muted); margin-top: 0.3rem; }
 
 /* AG Grid 表格（BaizeGrid 封装） */
@@ -104,6 +106,7 @@ h1 { font-family: var(--font); font-size: 1.25rem; font-weight: 700; }
 .summary-cell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .baize-empty { color: var(--muted); font-size: 0.9rem; }
 .row-revoked { opacity: 0.55; }
+.row-isolated { background: rgba(245, 158, 11, 0.07); }
 
 /* 表头过滤按钮（漏斗）：常态品牌青色，hover 加深提示可点击 */
 .baize-grid-wrap .ag-header-cell-filter-button {

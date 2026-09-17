@@ -128,12 +128,20 @@ func (b *CommandBus) getPendingResult(id string) (*pb.CommandResult, bool) {
 }
 
 // BuildIsolateCmd 组装隔离/解除隔离指令
-func BuildIsolateCmd(isolate bool) *pb.Command {
+// reason 为空时填默认值（审计留痕：谁、为什么隔离）；ttlSeconds=0 表示不自动解除
+func BuildIsolateCmd(isolate bool, reason string, ttlSeconds uint32) *pb.Command {
+	if reason == "" {
+		reason = "dashboard"
+	}
 	return &pb.Command{
 		CommandId:  fmt.Sprintf("cmd-%d", time.Now().UnixNano()),
 		IssuedAtNs: uint64(time.Now().UnixNano()),
 		CommandType: &pb.Command_Isolate{
-			Isolate: &pb.IsolateCommand{Isolate: isolate},
+			Isolate: &pb.IsolateCommand{
+				Isolate:    isolate,
+				Reason:     reason,
+				TtlSeconds: ttlSeconds,
+			},
 		},
 	}
 }
@@ -182,12 +190,6 @@ func BuildExecCmd(script, interpreter string, timeoutSecs uint32, reason string)
 			},
 		},
 	}
-}
-
-// IsolateAgent 隔离指定 Agent 主机（自动化响应）
-func (b *CommandBus) IsolateAgent(agentID string) {
-	cmd := BuildIsolateCmd(true)
-	_ = b.SendToAgent(agentID, cmd)
 }
 
 // ExecuteSync 下发指令并同步等待 Agent 执行结果。

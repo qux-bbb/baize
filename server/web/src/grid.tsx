@@ -65,12 +65,16 @@ export const linkCell = (onClick: (row: any) => void) => (p: ICellRendererParams
   <span className="link" onClick={(e) => { e.stopPropagation(); onClick(p.data) }}>详情</span>
 )
 
-// 主机状态：在线绿点 / 离线灰点 / 已吊销 badge
+// 主机状态：已吊销 / 已隔离（琥珀）/ 在线绿点 / 离线灰点
 export const statusCell = (p: ICellRendererParams) => {
   const d = p.data || {}
-  return d.revoked
-    ? <><span className="dot gray" /> <span className="badge offline">已吊销</span></>
-    : <><span className={`dot ${d.is_online ? 'green' : 'gray'}`} /> <span className={`badge ${d.is_online ? 'online' : 'offline'}`}>{d.is_online ? '在线' : '离线'}</span></>
+  if (d.revoked) {
+    return <><span className="dot gray" /> <span className="badge offline">已吊销</span></>
+  }
+  if (d.isolated) {
+    return <><span className="dot amber" /> <span className="badge isolated">已隔离</span></>
+  }
+  return <><span className={`dot ${d.is_online ? 'green' : 'gray'}`} /> <span className={`badge ${d.is_online ? 'online' : 'offline'}`}>{d.is_online ? '在线' : '离线'}</span></>
 }
 
 // 时间格式化（ISO 字符串 → yyyy-MM-dd HH:mm:ss）
