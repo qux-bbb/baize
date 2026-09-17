@@ -4,6 +4,3 @@
 *.sh text eol=lf
 # markdown 永远 LF——GitHub 渲染与 diff 稳定
 *.md text eol=lf
-# 发布仓库单一文案源永远 LF——publish_repo.sh 有 CR 行尾校验，检出须保持 LF 才不误报
-server/deploy/publish/README.md        text eol=lf
-server/deploy/publish/description.txt  text eol=lf

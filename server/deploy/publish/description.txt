@@ -1,1 +1,0 @@
-Baize (白泽) — 轻量 Agent–Server 采集与分析平台（Rust Agent + Go Server + React Dashboard）
