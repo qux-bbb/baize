@@ -1,1 +1,1 @@
-Baize (白泽) — 最小发布仓库：curl 一键安装脚本 + Release 产物（源码私有）
+Baize (白泽) — 轻量 Agent–Server 采集与分析平台（Rust Agent + Go Server + React Dashboard）

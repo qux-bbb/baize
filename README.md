@@ -14,6 +14,16 @@ Baize 是一个轻量的 Agent–Server 采集与分析平台：Rust Agent 采�
 >
 > 已发布到 GitHub 时也可一条命令装：`curl -fsSL https://raw.githubusercontent.com/qux-bbb/baize/main/install.sh | sudo bash`，脚本自动拉 latest + 校验 + 完整安装。
 
+可选环境变量：
+
+| 变量 | 说明 |
+|------|------|
+| `BAIZE_PUBLIC_ADDR` | Server 局域网地址（证书 SAN + Agent 连接地址）。给了免交互；不给则自动检测选 IP |
+| `BAIZE_VERSION` | 指定安装版本（默认 latest release） |
+| `BAIZE_OFFLINE_TARBALL` | 本地已有 tar.gz，跳过下载（离线/内网现场） |
+
+> 前提：目标机 Linux + root + `curl` + `tar` + `sha256sum`，且能访问 `github.com`（raw 与 release 下载）。
+
 ```bash
 tar xzf baize-server-<版本>-linux-amd64.tar.gz
 cd baize-server-<版本>-linux-amd64
@@ -39,6 +49,10 @@ sudo ./install_server.sh
 4. 事件页出现 notepad 的进程创建事件
 
 > 📦 **完整部署指南**（防火墙细节、常见问题排查、安全说明、卸载）：见 [`server/deploy/README.md`](server/deploy/README.md)
+
+## Release 产物
+
+`v0.1.x` 发布的 assets：`baize-server-*-linux-amd64.tar.gz` / 对应 `-windows-amd64.zip`、`baize-agent-*-windows-amd64.zip`、`SHA256SUMS.txt`（安装脚本会校验完整性）。
 
 ## 网络隔离（隔离主机）
 
@@ -100,4 +114,6 @@ Phase 1 & 2 已完成：Agent 进程采集（EvtSubscribe）+ Server 检测/响�
 
 ## 协议
 
-详见 [proto/baize/v1/baize.proto](proto/baize/v1/baize.proto)
+GPL-3.0
+
+协议定义详见 [proto/baize/v1/baize.proto](proto/baize/v1/baize.proto)
