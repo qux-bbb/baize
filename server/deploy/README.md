@@ -241,6 +241,36 @@ cat server/data/agents.json      # 注册记录（agent_id / hostname / token_id
 
 ---
 
+## 网络隔离（隔离 / 解除主机）
+
+Dashboard 主机页行尾菜单或主机详情页可**隔离主机 / 解除隔离**。隔离由 Agent 用 WFP 子层实现：**不改系统防火墙配置**，因此不受 GPO 刷新影响。
+
+**隔离期间保留**：Agent → Server gRPC 端口、DNS(UDP/TCP 53)、本地回环；其余出站全部阻断（含内网横向）。
+
+**状态与自动解除**
+
+- 主机状态列显示「已隔离」（由 Agent 心跳上报，30 秒一轮校正）
+- 隔离在 Agent 崩溃、系统重启后保持（过滤器常驻 + 启动时按本地 `isolate.json` 重新施加）
+- 隔离时可指定自动解除时间（最长 7 天）；不指定则只能手动解除
+
+**失联时的本地救援**（Agent 连不回 Server、Dashboard 解除不生效）
+
+```cmd
+"C:\Program Files\Baize\baize-agent.exe" --isolate-off
+```
+
+需管理员权限；只删除 Baize 自己的隔离规则，不影响其它防火墙配置。
+
+**排查残留 / 确认隔离是否生效**
+
+```cmd
+netsh wfp show state file=-
+```
+
+输出中搜索 `Baize` 子层：隔离生效时应能搜到，解除隔离或卸载 Agent 后应搜不到。
+
+**限制**：仅 Windows Agent 支持；隔离期间主机仍可与 Server 通信（这是设计目标，便于继续取证与下达解除）。
+
 ## 安全说明
 
 - **传输**：gRPC 单向 TLS（Agent 内置 CA 验证 Server 身份）+ token 认证 Agent；Dashboard/API 为 HTTPS。对标 Elastic Fleet 默认方案。

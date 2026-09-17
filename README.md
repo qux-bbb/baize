@@ -40,6 +40,24 @@ sudo ./install_server.sh
 
 > 📦 **完整部署指南**（防火墙细节、常见问题排查、安全说明、卸载）：见 [`server/deploy/README.md`](server/deploy/README.md)
 
+## 网络隔离（隔离主机）
+
+主机页行尾 `⋯` → **隔离主机**（或主机详情页按钮），选择自动解除时间、填写原因后确认。隔离立即生效，主机状态列变为「已隔离」，菜单随之变为「解除隔离」。
+
+- **隔离期间只保留**：Agent → Server 的管理通道、DNS(53)、本地回环；其余出站（含内网横向）全部阻断
+- 状态由 Agent 上报（心跳 30 秒一轮校正）；隔离在 **Agent 崩溃 / 系统重启后依然保持**
+- **解除**：菜单「解除隔离」一键恢复；自动解除可选 1 小时 / 24 小时 / 7 天 / 不自动解除
+- ⚠️ **本地救援**（Agent 失联、Dashboard 解除不生效时，在目标机管理员终端执行）：
+
+  ```
+  "C:\Program Files\Baize\baize-agent.exe" --isolate-off
+  ```
+
+- 卸载 Agent 会先自动解除隔离，不留残留规则
+- 仅支持 Windows Agent
+
+> 运维与排障细节（残留检查等）：见 [`server/deploy/README.md`](server/deploy/README.md)
+
 ## 开发模式
 
 - **前置：协议变更后重新生成** — 新增/修改事件字段、事件类型、指令或 RPC 时执行（生成码入库，run.bat / go build 不会自动重生成）
@@ -76,7 +94,7 @@ sudo ./install_server.sh
 Phase 1 & 2 已完成：Agent 进程采集（EvtSubscribe）+ Server 检测/响应 + Dashboard 全链路可用。
 
 - [x] Go Server（gRPC + Bleve 存储 + HTTP API + 认证）
-- [x] Rust Agent（进程采集 + 文件监控 + 指令响应 + 注册模型）
+- [x] Rust Agent（进程采集 + 文件监控 + 指令响应 + 注册模型 + 网络隔离）
 - [x] React Dashboard（主机/事件/告警 + 下载分发）
 - [ ] ETW 进程监控 / 注册表与计划任务采集 / YARA 扫描 / 溯源图
 
