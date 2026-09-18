@@ -49,12 +49,13 @@ GH_DL="https://github.com/$REPO/releases/download"
 if [[ -z "$VERSION" ]]; then
   echo "❯ 探测最新 release 版本..."
   TAG=""
-  # 首选 api.github.com（拿 tag_name）；失败回退到 releases/latest 的 Location 跳转
-  # （后者不占 api 配额，但同样可靠）
+  # 首选 api.github.com（拿 tag_name）；失败回退 github.com 网页端跳转拿 tag
+  # （网页端不消耗 API 配额，未认证 API 的 60 次/小时限流用尽时仍能探测；
+  #  用 GET(-fsSL) 跟随 302 —— HEAD(-I) 在部分 curl/代理组合下不跟随重定向，会拿不到 tag）
   TAG="$(curl -fsSL "$GH_API/releases/latest" 2>/dev/null \
       | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1 || true)"
   if [[ -z "$TAG" || "$TAG" == *'/releases/tag/'* ]]; then
-    TAG="$(curl -fsLI -o /dev/null -w '%{url_effective}' "$GH_API/releases/latest" 2>/dev/null \
+    TAG="$(curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" 2>/dev/null \
       | sed -n 's|.*/releases/tag/||p' || true)"
   fi
   [[ -n "$TAG" ]] || { echo "[错误] 无法探测 release 版本（网络 / repo 可见性 / BAIZE_REPO 是否正确）"; exit 1; }
