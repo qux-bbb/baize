@@ -12,7 +12,6 @@
 #   BAIZE_PUBLIC_ADDR      Server 局域网地址（证书 SAN + Agent 连接地址）。
 #                          给了免交互；不给则交给 install_server.sh 自动检测选 IP
 #   BAIZE_VERSION          版本覆盖（默认从 GitHub latest release 自动探测）
-#   BAIZE_OFFLINE_TARBALL  本地已有 tar.gz 时跳过下载（离线/内网现场）
 #
 # 流程: 探测版本 → 下载 tar.gz + SHA256SUMS → 校验 → mktemp 解压
 #       → 调解压目录里的 install_server.sh → 安装完成
@@ -69,22 +68,16 @@ trap 'rm -rf "$TMP"' EXIT
 ASSET="baize-server-$VERSION-linux-amd64.tar.gz"
 TARBALL="$TMP/$ASSET"
 
-# ---- 获取发布包（离线包 或 下载+校验）----
-if [[ -n "${BAIZE_OFFLINE_TARBALL:-}" ]]; then
-  [[ -f "$BAIZE_OFFLINE_TARBALL" ]] || { echo "[错误] 离线包不存在: $BAIZE_OFFLINE_TARBALL"; exit 1; }
-  cp "$BAIZE_OFFLINE_TARBALL" "$TARBALL"
-  echo "  使用离线包: $BAIZE_OFFLINE_TARBALL"
+# ---- 获取发布包（下载 + SHA256 校验）----
+echo "❯ 下载 $GH_DL/v$VERSION/$ASSET"
+curl -fsSL -o "$TARBALL" "$GH_DL/v$VERSION/$ASSET" \
+  || { echo "[错误] 下载失败（检查版本 / 网络 / BAIZE_REPO）"; exit 1; }
+if curl -fsSL -o "$TMP/SHA256SUMS.txt" "$GH_DL/v$VERSION/SHA256SUMS.txt" 2>/dev/null; then
+  (cd "$TMP" && sha256sum -c --ignore-missing SHA256SUMS.txt) \
+    || { echo "[错误] SHA256 校验失败，发布包疑似损坏或被篡改"; exit 1; }
+  echo "  SHA256 校验通过 ✔"
 else
-  echo "❯ 下载 $GH_DL/v$VERSION/$ASSET"
-  curl -fsSL -o "$TARBALL" "$GH_DL/v$VERSION/$ASSET" \
-    || { echo "[错误] 下载失败（检查版本 / 网络 / BAIZE_REPO）"; exit 1; }
-  if curl -fsSL -o "$TMP/SHA256SUMS.txt" "$GH_DL/v$VERSION/SHA256SUMS.txt" 2>/dev/null; then
-    (cd "$TMP" && sha256sum -c --ignore-missing SHA256SUMS.txt) \
-      || { echo "[错误] SHA256 校验失败，发布包疑似损坏或被篡改"; exit 1; }
-    echo "  SHA256 校验通过 ✔"
-  else
-    echo "[警告] SHA256SUMS 不可用，跳过校验"
-  fi
+  echo "[警告] SHA256SUMS 不可用，跳过校验"
 fi
 
 # ---- 解压 ----

@@ -22,7 +22,9 @@
 
 ---
 
-## ⚡ Server 一键安装（GitHub Release，Linux，约 1 分钟）
+## ⚡ Server 安装（GitHub Release，Linux，约 1 分钟）
+
+**方式一：一条命令安装**（目标机可访问 `github.com`）
 
 > 若发布包已发布到 GitHub（`build_release.sh` 加 `BAIZE_RELEASE=1`），目标 Linux 机器可一条命令装完：
 
@@ -41,8 +43,28 @@ curl -fsSL https://raw.githubusercontent.com/qux-bbb/baize/main/install.sh | sud
   > 不要用环境变量前缀（`VAR=x curl | sudo bash` 只到 curl、且 `sudo` 默认 `env_reset` 会清空自定义环境变量，bash 都拿不到）。
 
 - 不指定地址则 `install_server.sh` 自动检测本机 IP 供选择（多一次交互）
-- 可选：`BAIZE_VERSION`（指定版本）、`BAIZE_OFFLINE_TARBALL`（本地包，离线现场）
+- 指定安装版本（默认 latest release；变量须挂在管道右侧 `bash` 上，root 执行）：
+
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/qux-bbb/baize/main/install.sh | BAIZE_VERSION=0.1.6 bash
+  ```
+
 - 前提：目标机可访问 `github.com`（raw + release 下载）
+
+**方式二：手动下载安装**（离线/内网，或指定版本）
+
+1. 到 [Releases 页面](https://github.com/qux-bbb/baize/releases/latest) 下载 `baize-server-<版本>-linux-amd64.tar.gz`（同页 `SHA256SUMS.txt` 用于校验）
+2. 校验、解压、安装：
+
+```bash
+sha256sum -c --ignore-missing SHA256SUMS.txt
+tar xzf baize-server-<版本>-linux-amd64.tar.gz
+cd baize-server-<版本>-linux-amd64
+sudo ./install_server.sh --public-addr 192.168.1.10
+```
+
+- `--public-addr` 可省略：安装脚本自动检测本机 IP 供选择；可选 `--port`（默认 50051）、`--http-port`（默认 8080）
+- 后续流程与方式一相同：创建目录/运行用户 → 部署 Agent 分发文件 → 生成 systemd 服务并启动 → 打印**首次登录密码**
 
 ---
 

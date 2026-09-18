@@ -8,31 +8,45 @@ Baize 是一个轻量的 Agent–Server 采集与分析平台：Rust Agent 采�
 
 > 前置条件：Server 机器（Linux）+ Agent 机器（Windows 10+ x64），两机同一局域网可互通。
 
-### ① 部署 Server（Linux 一键安装，约 5 分钟）
+### ① 部署 Server（Linux，约 5 分钟）
 
-> 发布包在 `server/release/`（`build_release.sh` 构建，内含 Server 二进制 + Agent 分发文件 + 安装脚本）。
->
-> 已发布到 GitHub 时也可一条命令装：`curl -fsSL https://raw.githubusercontent.com/qux-bbb/baize/main/install.sh | sudo bash`，脚本自动拉 latest + 校验 + 完整安装。
+> 前提：目标机 Linux + root + `curl` + `tar` + `sha256sum`。
 
-可选环境变量：
-
-| 变量 | 说明 |
-|------|------|
-| `BAIZE_PUBLIC_ADDR` | Server 局域网地址（证书 SAN + Agent 连接地址）。给了免交互；不给则自动检测选 IP |
-| `BAIZE_VERSION` | 指定安装版本（默认 latest release） |
-| `BAIZE_OFFLINE_TARBALL` | 本地已有 tar.gz，跳过下载（离线/内网现场） |
-
-> 前提：目标机 Linux + root + `curl` + `tar` + `sha256sum`，且能访问 `github.com`（raw 与 release 下载）。
+**方式一：一条命令安装**（目标机可访问 `github.com`）
 
 ```bash
-tar xzf baize-server-<版本>-linux-amd64.tar.gz
-cd baize-server-<版本>-linux-amd64
-sudo ./install_server.sh
+curl -fsSL https://raw.githubusercontent.com/qux-bbb/baize/main/install.sh | sudo bash
 ```
 
-- 不指定 `--public-addr` 时，脚本自动检测本机 IP 供选择（也可手动输入）；可选参数 `--port`（默认 50051）、`--http-port`（默认 8080）
-- 自动完成：创建目录/运行用户 → 部署 Agent 分发文件 → 生成 systemd 服务并启动 → 打印**首次登录密码**
-- ✅ 验证：`systemctl status baize-server` 为 active；`curl -sk https://127.0.0.1:8080/api/health`
+脚本自动：探测 latest release → 下载 tar.gz → SHA256 校验 → 解压安装。指定 Server 局域网地址（免交互）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/qux-bbb/baize/main/install.sh | sudo bash -s -- --public-addr 192.168.1.10
+```
+
+> 参数用 `bash -s --` 传，不要用 `VAR=x curl ... | sudo bash`：变量只到 curl，且 sudo 默认 `env_reset` 会清空。
+
+**指定安装版本**（默认 latest release；变量须挂在管道右侧 `bash` 上，root 执行）
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/qux-bbb/baize/main/install.sh | BAIZE_VERSION=0.1.6 bash
+```
+
+**方式二：手动下载安装**（离线/内网，或指定版本）
+
+1. 到 [Releases 页面](https://github.com/qux-bbb/baize/releases/latest) 下载 `baize-server-<版本>-linux-amd64.tar.gz`（同页 `SHA256SUMS.txt` 用于校验）
+2. 校验、解压、安装：
+
+```bash
+sha256sum -c --ignore-missing SHA256SUMS.txt
+tar xzf baize-server-<版本>-linux-amd64.tar.gz
+cd baize-server-<版本>-linux-amd64
+sudo ./install_server.sh --public-addr 192.168.1.10
+```
+
+- `--public-addr` 可省略：脚本自动检测本机 IP 供选择；可选 `--port`（默认 50051）、`--http-port`（默认 8080）
+- 安装脚本自动完成：创建目录/运行用户 → 部署 Agent 分发文件 → 生成 systemd 服务并启动 → 打印**首次登录密码**
+- ✅ 验证（两种方式相同）：`systemctl status baize-server` 为 active；`curl -sk https://127.0.0.1:8080/api/health`
 
 ### ② 安装 Agent（zip）
 
