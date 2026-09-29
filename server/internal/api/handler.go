@@ -435,14 +435,26 @@ func (h *Handler) ConfigFileWatch(w http.ResponseWriter, r *http.Request) {
 // ── 事件时间线 ──────────────────────────────────────────────
 
 // Events 事件时间线查询。
-// size 取 5000：hostname 已下推 Bleve，q 在 Go 侧模糊过滤，5000 条覆盖足够深的
-// 历史窗口（旧逻辑"先取最新100条再过滤"导致搜不到旧数据，已修复）。
-const eventsQuerySize = 5000
+// 默认 5000 条（原"先取最新 100 条再过滤"导致搜不到旧数据，已修复）：
+// hostname 已下推 Bleve，q 在 Go 侧模糊过滤，默认窗口足够深；size 可由查询参数覆盖。
+const (
+	eventsQuerySize    = 5000
+	eventsQuerySizeMax = 20000
+)
 
 func (h *Handler) Events(w http.ResponseWriter, r *http.Request) {
 	hostname := r.URL.Query().Get("hostname")
 	q := r.URL.Query().Get("q")
-	events, err := h.store.SearchEvents(hostname, q, eventsQuerySize)
+	size := eventsQuerySize
+	if v := r.URL.Query().Get("size"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			size = n
+		}
+	}
+	if size > eventsQuerySizeMax {
+		size = eventsQuerySizeMax
+	}
+	events, total, err := h.store.SearchEvents(hostname, q, size)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -450,7 +462,7 @@ func (h *Handler) Events(w http.ResponseWriter, r *http.Request) {
 	if events == nil {
 		events = []store.EventResult{}
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"events": events, "total": len(events)})
+	json.NewEncoder(w).Encode(map[string]interface{}{"events": events, "total": total, "size": size})
 }
 
 // ── 事件类型配置 ──────────────────────────────────────────

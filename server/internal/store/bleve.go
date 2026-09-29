@@ -875,8 +875,10 @@ func (s *Store) SearchEventsRaw(hostname, query string, size int) ([]map[string]
 	return rows, nil
 }
 
-// SearchEvents 查询事件时间线
-func (s *Store) SearchEvents(hostname, query string, size int) ([]EventResult, error) {
+// SearchEvents 查询事件列表。
+// 返回的 total 是 Bleve 命中总数（hostname 已下推过滤），不是返回条数；
+// query 走 Go 侧模糊过滤，故 query 非空时 total 可能大于 len(events)。
+func (s *Store) SearchEvents(hostname, query string, size int) ([]EventResult, int, error) {
 	// hostname 下推到 Bleve 查询（精确 phrase 匹配）；query 仍 Go 侧模糊过滤
 	// （q 语义杂：PID/IP/域名/文件名，Bleve 分词对 192.168.1.1、pid=123 不可控，Contains 最符合预期）
 	var q bquery.Query = bleve.NewQueryStringQuery("type:event")
@@ -893,7 +895,7 @@ func (s *Store) SearchEvents(hostname, query string, size int) ([]EventResult, e
 
 	result, err := s.index.Search(search)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	var events []EventResult
@@ -923,7 +925,7 @@ func (s *Store) SearchEvents(hostname, query string, size int) ([]EventResult, e
 			Raw:       filterEmptyFields(hit.Fields),
 		})
 	}
-	return events, nil
+	return events, int(result.Total), nil
 }
 
 // GetAlert 按 alert_id 查询告警详情
