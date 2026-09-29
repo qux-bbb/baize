@@ -22,6 +22,7 @@ type Handler struct {
 	store  *store.Store
 	cmdBus *engine.CommandBus
 	cfg    *engine.ConfigManager
+	eng    *engine.Engine
 	auth   *AuthManager
 	reg    *AgentRegistry
 	trans  *filexfer.Registry
@@ -35,8 +36,8 @@ type Handler struct {
 	caFile string
 }
 
-func New(s *store.Store, cmdBus *engine.CommandBus, cfg *engine.ConfigManager, auth *AuthManager, reg *AgentRegistry, trans *filexfer.Registry, agentBinary, publicAddr, agentInstaller, caFile string) *Handler {
-	return &Handler{store: s, cmdBus: cmdBus, cfg: cfg, auth: auth, reg: reg, trans: trans, agentBinary: agentBinary, publicAddr: publicAddr, agentInstaller: agentInstaller, caFile: caFile}
+func New(s *store.Store, cmdBus *engine.CommandBus, cfg *engine.ConfigManager, eng *engine.Engine, auth *AuthManager, reg *AgentRegistry, trans *filexfer.Registry, agentBinary, publicAddr, agentInstaller, caFile string) *Handler {
+	return &Handler{store: s, cmdBus: cmdBus, cfg: cfg, eng: eng, auth: auth, reg: reg, trans: trans, agentBinary: agentBinary, publicAddr: publicAddr, agentInstaller: agentInstaller, caFile: caFile}
 }
 
 // ── 登录 ──────────────────────────────────────────────────
@@ -227,8 +228,24 @@ func (h *Handler) AgentDelete(w http.ResponseWriter, r *http.Request) {
 
 // ── 告警列表 ──────────────────────────────────────────────
 
+// 告警列表默认/最大返回条数（前端一次拉取后在 Grid 内分页、过滤）
+const (
+	alertsQuerySize    = 500
+	alertsQuerySizeMax = 2000
+)
+
 func (h *Handler) Alerts(w http.ResponseWriter, r *http.Request) {
-	alerts, total, err := h.store.SearchAlerts(50)
+	size := alertsQuerySize
+	if v := r.URL.Query().Get("size"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			size = n
+		}
+	}
+	if size > alertsQuerySizeMax {
+		size = alertsQuerySizeMax
+	}
+
+	alerts, total, err := h.store.SearchAlerts(size)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -236,7 +253,7 @@ func (h *Handler) Alerts(w http.ResponseWriter, r *http.Request) {
 	if alerts == nil {
 		alerts = []store.AlertResult{}
 	}
-	json.NewEncoder(w).Encode(map[string]interface{}{"alerts": alerts, "total": total})
+	json.NewEncoder(w).Encode(map[string]interface{}{"alerts": alerts, "total": total, "size": size})
 }
 
 // ── 告警详情 ──────────────────────────────────────────────
@@ -258,7 +275,115 @@ func (h *Handler) AlertDetail(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+
+	// source_event 在存储中是 JSON 字符串（Bleve 单值 stored 字段返回 string），
+	// 解析成对象再返回，详情页才能按"字段 → 值"渲染
+	if raw, ok := doc["source_event"].(string); ok && raw != "" {
+		var fields map[string]interface{}
+		if err := json.Unmarshal([]byte(raw), &fields); err == nil {
+			doc["source_event"] = fields
+		}
+	}
 	json.NewEncoder(w).Encode(doc)
+}
+
+// ── 规则管理 ──────────────────────────────────────────────
+
+// Rules GET: 规则列表 + 统计 + 解析失败清单
+func (h *Handler) Rules(w http.ResponseWriter, r *http.Request) {
+	metas, errs := h.eng.RulesInfo()
+	enabled := 0
+	for _, m := range metas {
+		if m.Enabled {
+			enabled++
+		}
+	}
+	if metas == nil {
+		metas = []engine.RuleMeta{}
+	}
+	if errs == nil {
+		errs = []engine.RuleLoadError{}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"rules":   metas,
+		"total":   len(metas),
+		"enabled": enabled,
+		"errors":  errs,
+	})
+}
+
+// RuleToggle POST: {file, enabled} 启用/停用规则（立即生效）
+func (h *Handler) RuleToggle(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		File    string `json:"file"`
+		Enabled bool   `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, 400, "invalid json")
+		return
+	}
+	if err := h.eng.SetEnabled(req.File, req.Enabled); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "file": req.File, "enabled": req.Enabled})
+}
+
+// RuleSave POST: {file, yaml} 新建/覆盖规则（解析通过才落盘）
+func (h *Handler) RuleSave(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		File string `json:"file"`
+		YAML string `json:"yaml"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, 400, "invalid json")
+		return
+	}
+	if strings.TrimSpace(req.YAML) == "" {
+		writeErr(w, 400, "规则内容不能为空")
+		return
+	}
+	if err := h.eng.SaveRule(req.File, req.YAML); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "file": req.File})
+}
+
+// RuleYAML GET: ?file= 返回规则原文（查看/编辑用）
+func (h *Handler) RuleYAML(w http.ResponseWriter, r *http.Request) {
+	file := r.URL.Query().Get("file")
+	content, err := h.eng.RuleYAML(file)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"file": file, "yaml": content})
+}
+
+// RuleDelete DELETE: ?file= 删除自定义规则（内置规则只允许停用）
+func (h *Handler) RuleDelete(w http.ResponseWriter, r *http.Request) {
+	if err := h.eng.DeleteRule(r.URL.Query().Get("file")); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// RuleReload POST: 重新从磁盘加载规则（直接改过规则文件时用）
+func (h *Handler) RuleReload(w http.ResponseWriter, r *http.Request) {
+	if err := h.eng.Reload(); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	metas, _ := h.eng.RulesInfo()
+	enabled := 0
+	for _, m := range metas {
+		if m.Enabled {
+			enabled++
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "total": len(metas), "enabled": enabled})
 }
 
 // ── 文件监控配置 ─────────────────────────────────────────

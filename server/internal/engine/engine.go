@@ -4,6 +4,9 @@ package engine
 import (
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -15,33 +18,215 @@ import (
 // Engine 检测引擎
 type Engine struct {
 	mu     sync.RWMutex
-	rules  []*SigmaRule
+	rules  []*SigmaRule // 已启用规则（匹配热路径只遍历这个）
+	all    []*SigmaRule // 目录中全部规则（含已禁用，供规则页展示）
+	errs   []RuleLoadError
 	store  *store.Store
 	loaded bool
+
+	ruleDir string     // 规则目录（真源：*.yml 文件）
+	state   *RulesState // 启用状态（rules.json）
 }
 
-// New 创建检测引擎，传入 ES 存储（用于写入告警）
+// New 创建检测引擎，传入存储（用于写入告警）
 func New(s *store.Store) *Engine {
 	return &Engine{store: s}
 }
 
-// LoadRules 加载规则目录
-func (e *Engine) LoadRules(path string) error {
-	rules, err := LoadSigmaDir(path)
+// InitRules 初始化规则目录：播种内置规则 → 加载状态 → 加载规则。
+// ruleDir 为规则真源目录（如 data/rules），stateFile 存启停状态（如 data/rules.json）。
+// 播种只做一次（按 rules.json 的 seeded 名单增量补），绝不覆盖用户已存在/改过的文件。
+func (e *Engine) InitRules(ruleDir, stateFile string) error {
+	if err := os.MkdirAll(ruleDir, 0755); err != nil {
+		return fmt.Errorf("创建规则目录失败: %w", err)
+	}
+
+	e.mu.Lock()
+	e.ruleDir = ruleDir
+	e.state = NewRulesState(stateFile)
+	e.mu.Unlock()
+
+	seeded := e.state.Seeded()
+	names, err := BuiltInRuleNames()
+	if err != nil {
+		return fmt.Errorf("读取内嵌规则失败: %w", err)
+	}
+
+	var newly []string
+	for _, name := range names {
+		if seeded[name] {
+			continue // 已播种过：用户改过、删过都不再动它
+		}
+		dest := filepath.Join(ruleDir, name)
+		if _, err := os.Stat(dest); err == nil {
+			newly = append(newly, name) // 目录里已有同名文件 → 只登记，不覆盖
+			continue
+		}
+		data, err := ReadBuiltInRule(name)
+		if err != nil {
+			log.Printf("[Engine] 读取内嵌规则 %s 失败: %v", name, err)
+			continue
+		}
+		if err := os.WriteFile(dest, data, 0644); err != nil {
+			log.Printf("[Engine] 播种规则 %s 失败: %v", dest, err)
+			continue
+		}
+		log.Printf("[Engine] 播种内置规则: %s", name)
+		newly = append(newly, name)
+	}
+	e.state.MarkSeeded(newly)
+
+	return e.Reload()
+}
+
+// Reload 重新从规则目录加载规则，并按启用状态重建匹配列表（热生效，无需重启）
+func (e *Engine) Reload() error {
+	e.mu.RLock()
+	dir := e.ruleDir
+	e.mu.RUnlock()
+	if dir == "" {
+		return fmt.Errorf("规则目录未初始化")
+	}
+
+	rules, errs, err := LoadSigmaDirDetailed(dir)
 	if err != nil {
 		return fmt.Errorf("加载规则失败: %w", err)
 	}
 
 	e.mu.Lock()
-	e.rules = rules
+	e.all = rules
+	e.errs = errs
+	enabled := make([]*SigmaRule, 0, len(rules))
+	for _, r := range rules {
+		if e.state.IsEnabled(r.FileName) {
+			enabled = append(enabled, r)
+		}
+	}
+	e.rules = enabled
 	e.loaded = true
 	e.mu.Unlock()
 
-	log.Printf("[Engine] 已加载 %d 条 Sigma 规则", len(rules))
-	for _, r := range rules {
+	for _, le := range errs {
+		log.Printf("[Engine] 规则解析失败 %s: %s", le.File, le.Error)
+	}
+	log.Printf("[Engine] 已加载 %d 条规则（启用 %d）", len(rules), len(enabled))
+	for _, r := range enabled {
 		log.Printf("[Engine]   ├─ %s", r.RuleInfo())
 	}
 	return nil
+}
+
+// RulesInfo 返回全部规则元数据（含禁用）+ 解析失败清单
+func (e *Engine) RulesInfo() ([]RuleMeta, []RuleLoadError) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	metas := make([]RuleMeta, 0, len(e.all))
+	for _, r := range e.all {
+		metas = append(metas, RuleMeta{
+			File:        r.FileName,
+			Title:       r.Title,
+			ID:          r.ID,
+			Level:       r.Level,
+			Category:    r.LogSource.Category,
+			Description: r.Description,
+			Tags:        r.Tags,
+			Builtin:     e.state.IsBuiltin(r.FileName),
+			Enabled:     e.state.IsEnabled(r.FileName),
+		})
+	}
+	errs := append([]RuleLoadError(nil), e.errs...)
+	return metas, errs
+}
+
+// SetEnabled 启用/禁用一条规则（立即生效）
+func (e *Engine) SetEnabled(file string, on bool) error {
+	name, err := SafeRuleFileName(file)
+	if err != nil {
+		return err
+	}
+	if !e.ruleExists(name) {
+		return fmt.Errorf("规则不存在: %s", name)
+	}
+	e.state.SetEnabled(name, on)
+	return e.Reload()
+}
+
+// SaveRule 新建/覆盖一条规则（先解析校验，通过才落盘）
+func (e *Engine) SaveRule(file, content string) error {
+	name, err := SafeRuleFileName(file)
+	if err != nil {
+		return err
+	}
+	if _, err := ParseSigmaBytes([]byte(content)); err != nil {
+		return err
+	}
+
+	e.mu.RLock()
+	dir := e.ruleDir
+	e.mu.RUnlock()
+	if dir == "" {
+		return fmt.Errorf("规则目录未初始化")
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+		return fmt.Errorf("写入规则失败: %w", err)
+	}
+	log.Printf("[Engine] 已保存规则: %s", name)
+	return e.Reload()
+}
+
+// DeleteRule 删除一条自定义规则（内置规则只允许禁用，不允许删除）
+func (e *Engine) DeleteRule(file string) error {
+	name, err := SafeRuleFileName(file)
+	if err != nil {
+		return err
+	}
+	if e.state.IsBuiltin(name) {
+		return fmt.Errorf("内置规则不允许删除，请停用")
+	}
+	if !e.ruleExists(name) {
+		return fmt.Errorf("规则不存在: %s", name)
+	}
+
+	e.mu.RLock()
+	dir := e.ruleDir
+	e.mu.RUnlock()
+
+	if err := os.Remove(filepath.Join(dir, name)); err != nil {
+		return fmt.Errorf("删除规则失败: %w", err)
+	}
+	e.state.Forget(name)
+	log.Printf("[Engine] 已删除规则: %s", name)
+	return e.Reload()
+}
+
+// RuleYAML 读取规则原文（规则页查看/编辑用）
+func (e *Engine) RuleYAML(file string) (string, error) {
+	name, err := SafeRuleFileName(file)
+	if err != nil {
+		return "", err
+	}
+	e.mu.RLock()
+	dir := e.ruleDir
+	e.mu.RUnlock()
+	if dir == "" {
+		return "", fmt.Errorf("规则目录未初始化")
+	}
+	data, err := os.ReadFile(filepath.Join(dir, name))
+	if err != nil {
+		return "", fmt.Errorf("规则文件不存在: %s", name)
+	}
+	return string(data), nil
+}
+
+func (e *Engine) ruleExists(name string) bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	for _, r := range e.all {
+		if r.FileName == name {
+			return true
+		}
+	}
+	return false
 }
 
 // RuleCount 返回当前规则数
@@ -200,15 +385,38 @@ func fieldMatch(eventValue string, pattern interface{}) bool {
 	case []interface{}:
 		// 列表 OR 匹配
 		for _, item := range p {
-			if itemStr, ok := item.(string); ok {
-				if wildcardMatch(eventValue, itemStr) {
-					return true
-				}
+			if s, ok := patternString(item); ok && wildcardMatch(eventValue, s) {
+				return true
 			}
 		}
 		return false
+	default:
+		// YAML 标量（如 remote_port: 4444 写成整数）→ 统一转字符串比较。
+		// 事件字段一律是字符串，规则里写整数曾被静默跳过 → 规则永不出告警。
+		if s, ok := patternString(pattern); ok {
+			return wildcardMatch(eventValue, s)
+		}
+		return false
 	}
-	return false
+}
+
+// patternString 把规则里的 YAML 标量统一转成字符串（string / int / float / bool）
+func patternString(v interface{}) (string, bool) {
+	switch t := v.(type) {
+	case string:
+		return t, true
+	case int:
+		return strconv.Itoa(t), true
+	case int64:
+		return strconv.FormatInt(t, 10), true
+	case uint64:
+		return strconv.FormatUint(t, 10), true
+	case float64:
+		return strconv.FormatFloat(t, 'f', -1, 64), true
+	case bool:
+		return strconv.FormatBool(t), true
+	}
+	return "", false
 }
 
 // keywordMatch 关键词匹配 — 在事件所有字段中搜索

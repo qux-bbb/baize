@@ -106,9 +106,11 @@ interface BaizeGridProps<T> {
   onRowClicked?: (e: RowClickedEvent<T>) => void
   rowClassRules?: RowClassRules<T>
   emptyText?: string        // 空数据提示
+  pagination?: boolean      // 客户端分页（告警列表等）
+  pageSize?: number         // 每页行数（默认 50）
 }
 
-export function BaizeGrid<T>({ columnDefs, rowData, stateKey, height = 520, onRowClicked, rowClassRules, emptyText }: BaizeGridProps<T>) {
+export function BaizeGrid<T>({ columnDefs, rowData, stateKey, height = 520, onRowClicked, rowClassRules, emptyText, pagination = false, pageSize = 50 }: BaizeGridProps<T>) {
   const apiRef = useRef<GridApi | null>(null)
   const timerRef = useRef<number | undefined>(undefined)
   const initialState = useMemo(() => loadState(stateKey), [stateKey])
@@ -155,6 +157,7 @@ export function BaizeGrid<T>({ columnDefs, rowData, stateKey, height = 520, onRo
     apiRef.current?.resetColumnState()
     apiRef.current?.setFilterModel(null)
     setQuickFilter('')
+    if (pagination) apiRef.current?.paginationGoToFirstPage()
   }
 
   return (
@@ -204,6 +207,9 @@ export function BaizeGrid<T>({ columnDefs, rowData, stateKey, height = 520, onRo
             suppressFloatingFilterButton: true,
           }}
           initialState={initialState}
+          pagination={pagination}
+          paginationPageSize={pageSize}
+          paginationPageSizeSelector={pagination ? [50, 100, 200] : undefined}
           onStateUpdated={(e) => {
             // 状态变化（拖宽/排序/显隐/重排）300ms 防抖后落库
             window.clearTimeout(timerRef.current)

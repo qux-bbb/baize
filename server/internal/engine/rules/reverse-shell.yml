@@ -10,14 +10,14 @@ logsource:
 detection:
   selection_high_port:
     remote_port:
-      - 4444
-      - 5555
-      - 6666
-      - 7777
-      - 8888
-      - 9001
-      - 1337
-      - 31337
+      - '4444'
+      - '5555'
+      - '6666'
+      - '7777'
+      - '8888'
+      - '9001'
+      - '1337'
+      - '31337'
   selection_suspicious_proc:
     process_name:
       - '*nc*'

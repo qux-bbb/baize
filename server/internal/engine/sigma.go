@@ -25,8 +25,27 @@ type SigmaRule struct {
 	Tags        []string          `yaml:"tags"`
 	Status      string            `yaml:"status"`
 
-	// 文件路径（调试用）
-	filePath string
+	// FileName 规则文件名（不含目录）——规则的唯一标识，API / UI / 状态存储都用它
+	FileName string `yaml:"-"`
+}
+
+// RuleMeta 规则展示元数据（Dashboard 规则页）
+type RuleMeta struct {
+	File        string   `json:"file"`
+	Title       string   `json:"title"`
+	ID          string   `json:"id"`
+	Level       string   `json:"level"`
+	Category    string   `json:"category"`
+	Description string   `json:"description"`
+	Tags        []string `json:"tags"`
+	Builtin     bool     `json:"builtin"`
+	Enabled     bool     `json:"enabled"`
+}
+
+// RuleLoadError 规则解析失败信息（规则页需要明确告知哪条规则坏了、为什么）
+type RuleLoadError struct {
+	File  string `json:"file"`
+	Error string `json:"error"`
 }
 
 type SigmaLogSource struct {
@@ -68,11 +87,10 @@ func (d *SigmaDetection) UnmarshalYAML(value *yaml.Node) error {
 	return nil
 }
 
-// LoadSigmaDir 从目录加载所有 .yml/.yaml 规则文件
-func LoadSigmaDir(path string) ([]*SigmaRule, error) {
-	var rules []*SigmaRule
-
-	err := filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
+// LoadSigmaDirDetailed 从目录加载所有 .yml/.yaml 规则文件。
+// 解析失败的文件不中断加载，收集到 errs 返回（供 Dashboard 展示哪条规则坏了）。
+func LoadSigmaDirDetailed(path string) (rules []*SigmaRule, errs []RuleLoadError, err error) {
+	err = filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -86,14 +104,14 @@ func LoadSigmaDir(path string) ([]*SigmaRule, error) {
 
 		rule, err := LoadSigmaFile(p)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "[Sigma] 跳过 %s: %v\n", p, err)
+			errs = append(errs, RuleLoadError{File: filepath.Base(p), Error: err.Error()})
 			return nil
 		}
 		rules = append(rules, rule)
 		return nil
 	})
 
-	return rules, err
+	return rules, errs, err
 }
 
 // LoadSigmaFile 加载单个 Sigma 规则文件
@@ -103,23 +121,56 @@ func LoadSigmaFile(path string) (*SigmaRule, error) {
 		return nil, fmt.Errorf("读取失败: %w", err)
 	}
 
+	rule, err := ParseSigmaBytes(data)
+	if err != nil {
+		return nil, err
+	}
+	rule.FileName = filepath.Base(path)
+	return rule, nil
+}
+
+// ParseSigmaBytes 解析并校验规则内容（不落盘，供上传/编辑时预校验）
+func ParseSigmaBytes(data []byte) (*SigmaRule, error) {
 	var rule SigmaRule
 	if err := yaml.Unmarshal(data, &rule); err != nil {
 		return nil, fmt.Errorf("YAML 解析失败: %w", err)
 	}
-	rule.filePath = path
+	if err := validateRule(&rule); err != nil {
+		return nil, err
+	}
+	return &rule, nil
+}
 
+// validateRule 规则必填项校验（title / detection.condition / selection）
+func validateRule(rule *SigmaRule) error {
 	if rule.Title == "" {
-		return nil, fmt.Errorf("规则缺少 title")
+		return fmt.Errorf("规则缺少 title")
 	}
 	if rule.Detection.Condition == "" {
-		return nil, fmt.Errorf("规则缺少 detection.condition")
+		return fmt.Errorf("规则缺少 detection.condition")
 	}
 	if len(rule.Detection.Selections) == 0 && len(rule.Detection.Keywords) == 0 {
-		return nil, fmt.Errorf("规则缺少 selection")
+		return fmt.Errorf("规则缺少 selection")
 	}
+	return nil
+}
 
-	return &rule, nil
+// SafeRuleFileName 校验规则文件名（防目录穿越 / 非法后缀）
+func SafeRuleFileName(name string) (string, error) {
+	if name == "" {
+		return "", fmt.Errorf("规则文件名不能为空")
+	}
+	if name != filepath.Base(name) || strings.ContainsAny(name, `/\`) {
+		return "", fmt.Errorf("规则文件名不能包含路径分隔符")
+	}
+	ext := strings.ToLower(filepath.Ext(name))
+	if ext != ".yml" && ext != ".yaml" {
+		return "", fmt.Errorf("规则文件后缀必须是 .yml 或 .yaml")
+	}
+	if strings.HasPrefix(name, ".") {
+		return "", fmt.Errorf("规则文件名不合法")
+	}
+	return name, nil
 }
 
 // EventMap 将 Agent 事件转为字段键值对（用于规则匹配）

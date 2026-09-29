@@ -341,37 +341,17 @@ func firstMeta(md metadata.MD, key string) string {
 	return ""
 }
 
-func initEngine(esStore *store.Store) *engine.Engine {
+func initEngine(esStore *store.Store, dataDir string) *engine.Engine {
 	eng := engine.New(esStore)
 
-	// 将内嵌规则写入临时目录
-	tmpDir, err := os.MkdirTemp("", "baize-rules-*")
-	if err != nil {
-		log.Printf("[Engine] 创建临时目录失败: %v", err)
-		return eng
-	}
-
-	ruleNames, err := engine.BuiltInRuleNames()
-	if err != nil {
-		log.Printf("[Engine] 读取内嵌规则失败: %v", err)
-		return eng
-	}
-
-	for _, name := range ruleNames {
-		data, err := engine.ReadBuiltInRule(name)
-		if err != nil {
-			log.Printf("[Engine] 读取规则 %s 失败: %v", name, err)
-			continue
-		}
-		dest := filepath.Join(tmpDir, name)
-		if err := os.WriteFile(dest, data, 0644); err != nil {
-			log.Printf("[Engine] 写入规则文件 %s 失败: %v", dest, err)
-			continue
-		}
-	}
-
-	if err := eng.LoadRules(tmpDir); err != nil {
-		log.Printf("[Engine] 加载规则失败: %v", err)
+	// 规则真源：data/rules/*.yml（首次启动播种内置规则，之后用户可增删改）
+	// 启停状态：data/rules.json
+	ruleDir := filepath.Join(dataDir, "rules")
+	stateFile := filepath.Join(dataDir, "rules.json")
+	if err := eng.InitRules(ruleDir, stateFile); err != nil {
+		log.Printf("[Engine] 规则初始化失败: %v", err)
+	} else {
+		log.Printf("[Engine] 规则目录: %s", ruleDir)
 	}
 	return eng
 }
@@ -420,7 +400,7 @@ func main() {
 	defer bleveStore.Close()
 
 	// 初始化检测引擎
-	eng := initEngine(bleveStore)
+	eng := initEngine(bleveStore, *dataDir)
 
 	// 后台重建主机实体（从事件索引恢复存量主机，幂等）
 	if bleveStore != nil {
@@ -467,7 +447,7 @@ func main() {
 	{
 		mux := http.NewServeMux()
 		if bleveStore != nil {
-			apiHandler := api.New(bleveStore, cmdBus, cfg, authManager, registry, transRegistry, *agentBinary, *publicAddr, *agentInstaller, caFile)
+			apiHandler := api.New(bleveStore, cmdBus, cfg, eng, authManager, registry, transRegistry, *agentBinary, *publicAddr, *agentInstaller, caFile)
 			mux.HandleFunc("POST /api/login", apiHandler.Login)
 			mux.HandleFunc("POST /api/change-password", apiHandler.ChangePassword)
 			mux.HandleFunc("POST /api/logout", apiHandler.Logout)
@@ -481,6 +461,14 @@ func main() {
 			mux.HandleFunc("GET /api/enrollment-tokens/{id}", apiHandler.EnrollmentTokenPlain)
 			mux.HandleFunc("GET /api/alerts", apiHandler.Alerts)
 			mux.HandleFunc("GET /api/alert", apiHandler.AlertDetail)
+			// 规则管理（Sigma 规则：列表 / 启停 / 新建覆盖 / 查看 / 删除 / 重载）
+			mux.HandleFunc("GET /api/rules", apiHandler.Rules)
+			mux.HandleFunc("POST /api/rules", apiHandler.RuleSave)
+			mux.HandleFunc("PUT /api/rules", apiHandler.RuleSave)
+			mux.HandleFunc("DELETE /api/rules", apiHandler.RuleDelete)
+			mux.HandleFunc("GET /api/rules/yaml", apiHandler.RuleYAML)
+			mux.HandleFunc("POST /api/rules/toggle", apiHandler.RuleToggle)
+			mux.HandleFunc("POST /api/rules/reload", apiHandler.RuleReload)
 			mux.HandleFunc("GET /api/agent/info", apiHandler.AgentInfo)
 			mux.HandleFunc("GET /api/agent/package", apiHandler.AgentPackage)
 			mux.HandleFunc("GET /api/agent/installer", apiHandler.AgentInstaller)

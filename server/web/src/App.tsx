@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import type { ColDef, ICellRendererParams } from 'ag-grid-community'
 import ConfigPage from './ConfigPage'
+import RulesPage from './RulesPage'
 import AgentDownload from './AgentDownload'
 import LoginPage from './LoginPage'
 import ChangePasswordPage from './ChangePasswordPage'
@@ -33,7 +34,7 @@ interface EventItem {
   summary: string; pid?: number; hostname: string
 }
 
-type Route = { page: 'hosts' } | { page: 'alerts' } | { page: 'events'; host?: string; q?: string } | { page: 'host-detail'; agentId: string } | { page: 'config' } | { page: 'agent' }
+type Route = { page: 'hosts' } | { page: 'alerts' } | { page: 'events'; host?: string; q?: string } | { page: 'host-detail'; agentId: string } | { page: 'config' } | { page: 'rules' } | { page: 'agent' }
 
 // ── 工具 ──────────────────────────────────────────────
 
@@ -54,6 +55,7 @@ function parseHash(): Route {
   if (path.startsWith('hosts/')) return { page: 'host-detail', agentId: path.slice(6) }
   if (path === 'alerts') return { page: 'alerts' }
   if (path === 'config') return { page: 'config' }
+  if (path === 'rules') return { page: 'rules' }
   if (path === 'agent') return { page: 'agent' }
   if (path === 'events') {
     // 兼容两种参数名：主机详情页跳转用 host=，事件页过滤框用 hostname=
@@ -79,6 +81,10 @@ export default function App() {
   // 主机详情页单独按 agent_id 请求到的当前主机（独立于 hosts 列表，支持直连/刷新）
   const [hostDetail, setHostDetail] = useState<Host | null>(null)
   const [alerts, setAlerts] = useState<Alert[]>([])
+  // 告警总数（列表只拉前 N 条，侧栏计数要用后端总数）
+  const [alertTotal, setAlertTotal] = useState(0)
+  // 规则统计（侧栏「规则」tab 计数：启用 / 总数）
+  const [ruleStats, setRuleStats] = useState<{ enabled: number; total: number } | null>(null)
   const [events, setEvents] = useState<EventItem[]>([])
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
@@ -154,7 +160,7 @@ export default function App() {
 
   // 数据加载
   const load = useCallback(async (overrideToken?: string) => {
-    if (route.page === 'config' || route.page === 'agent') return
+    if (route.page === 'config' || route.page === 'rules' || route.page === 'agent') return
     setLoading(true); setErr('')
     try {
       const auth = overrideToken || localStorage.getItem('token')
@@ -163,8 +169,10 @@ export default function App() {
         const d = await fetchJSON<{ hosts: Host[] }>(`${API}/hosts`, opts)
         setHosts(d.hosts)
       } else if (route.page === 'alerts') {
-        const d = await fetchJSON<{ alerts: Alert[] }>(`${API}/alerts`, opts)
+        // 一次拉 500 条（后端上限 2000），分页与列过滤都在前端 Grid 内完成
+        const d = await fetchJSON<{ alerts: Alert[]; total: number }>(`${API}/alerts?size=500`, opts)
         setAlerts(d.alerts)
+        setAlertTotal(typeof d.total === 'number' ? d.total : d.alerts.length)
       } else if (route.page === 'events') {
         let params = new URLSearchParams()
         if (route.host) params.set('hostname', route.host)
@@ -195,12 +203,21 @@ export default function App() {
 
   useEffect(() => { load() }, [load])
 
+  // 规则统计（侧栏「规则」tab 计数：启用 / 总数）；规则页变更后经 onChanged 再次触发
+  const loadRuleStats = useCallback(async () => {
+    try {
+      const d = await fetchJSON<{ total: number; enabled: number }>(`${API}/rules`)
+      setRuleStats({ enabled: d.enabled, total: d.total })
+    } catch { /* 未登录 / 网络异常时静默，不影响主流程 */ }
+  }, [])
+
   // 初始加载主机列表（authState 就绪时触发）
   useEffect(() => {
     if (authState && !authState.mustChange) {
       load(authState.token)
+      loadRuleStats()
     }
-  }, [authState, load])
+  }, [authState, load, loadRuleStats])
 
   const doLogout = useCallback(async () => {
     try {
@@ -483,8 +500,9 @@ export default function App() {
           {route.page !== 'host-detail' && route.page !== 'agent' && (
             <div className="tabs">
               <button onClick={() => navigate('hosts')} className={route.page === 'hosts' ? 'active' : ''}>🖥 主机 ({hosts.length})</button>
-              <button onClick={() => navigate('alerts')} className={route.page === 'alerts' ? 'active' : ''}>🚨 告警 ({alerts.length})</button>
+              <button onClick={() => navigate('alerts')} className={route.page === 'alerts' ? 'active' : ''}>🚨 告警 ({alertTotal})</button>
               <button onClick={() => navigate('events')} className={route.page === 'events' ? 'active' : ''}>📋 事件</button>
+              <button onClick={() => navigate('rules')} className={route.page === 'rules' ? 'active' : ''}>📐 规则{ruleStats ? ` (${ruleStats.enabled}/${ruleStats.total})` : ''}</button>
               <button onClick={() => navigate('config')} className={route.page === 'config' ? 'active' : ''}>⚙ 配置</button>
               <button onClick={() => setShowChangePwd(true)} className="change-pwd-btn">🔑 密码</button>
               <button onClick={doLogout} className="logout-btn">退出</button>
@@ -525,6 +543,8 @@ export default function App() {
         )}
 
         {!loading && route.page === 'config' && <ConfigPage />}
+
+        {route.page === 'rules' && <RulesPage onChanged={loadRuleStats} />}
 
         {route.page === 'agent' && <AgentDownload />}
 
@@ -612,7 +632,11 @@ export default function App() {
 
         {!loading && route.page === 'alerts' && (
           <>
-            <div className="filter-bar" style={{ justifyContent: 'flex-end' }}>
+            <div className="filter-bar" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+              <span className="rules-stat">
+                共 <strong className="accent">{alertTotal}</strong> 条告警
+                {alertTotal > alerts.length ? `（已加载最近 ${alerts.length} 条）` : ''}
+              </span>
               <button onClick={() => setExportConfirm({ kind: 'alerts' })} className="btn" disabled={exporting}>{exporting ? '⏳ 导出中...' : '⬇ 导出'}</button>
             </div>
             <BaizeGrid
@@ -620,6 +644,8 @@ export default function App() {
               rowData={alerts}
               stateKey="baize.grid.alerts"
               height={600}
+              pagination
+              pageSize={50}
               onRowClicked={e => showAlertDetail(e.data!.alert_id)}
               emptyText="暂无告警"
             />

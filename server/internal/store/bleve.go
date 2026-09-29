@@ -789,7 +789,7 @@ func (s *Store) SearchAlerts(size int) ([]AlertResult, int, error) {
 	search := bleve.NewSearchRequest(q)
 	search.Size = size
 	search.SortBy([]string{"-@timestamp"})
-	search.Fields = []string{"alert_id", "rule_name", "severity", "hostname", "description", "event_type", "@timestamp", "tags"}
+	search.Fields = []string{"alert_id", "rule_id", "rule_name", "severity", "hostname", "description", "event_type", "@timestamp", "tags"}
 
 	result, err := s.index.Search(search)
 	if err != nil {
@@ -800,6 +800,7 @@ func (s *Store) SearchAlerts(size int) ([]AlertResult, int, error) {
 	for _, hit := range result.Hits {
 		alerts = append(alerts, AlertResult{
 			AlertID:     getFieldStr(hit.Fields, "alert_id"),
+			RuleID:      getFieldStr(hit.Fields, "rule_id"),
 			RuleName:    getFieldStr(hit.Fields, "rule_name"),
 			Severity:    getFieldStr(hit.Fields, "severity"),
 			Hostname:    getFieldStr(hit.Fields, "hostname"),
@@ -808,7 +809,8 @@ func (s *Store) SearchAlerts(size int) ([]AlertResult, int, error) {
 			Timestamp:   getFieldStr(hit.Fields, "@timestamp"),
 		})
 	}
-	return alerts, len(alerts), nil
+	// total 用 Bleve 命中总数（而非本页条数），Dashboard 计数与分页依赖它
+	return alerts, int(result.Total), nil
 }
 
 // SearchAlertsRaw 查询告警原始字段（CSV 导出用，字段全量）
@@ -929,6 +931,9 @@ func (s *Store) GetAlert(alertID string) (map[string]interface{}, error) {
 	q := bleve.NewQueryStringQuery(fmt.Sprintf(`alert_id:"%s"`, alertID))
 	search := bleve.NewSearchRequest(q)
 	search.Size = 1
+	// 必须显式指定返回字段：Bleve 未设置 Fields 时 hit.Fields 为 nil，
+	// 详情接口会返回空对象（前端详情页全空）
+	search.Fields = []string{"*"}
 
 	result, err := s.index.Search(search)
 	if err != nil {
@@ -1160,6 +1165,7 @@ type HostResult struct {
 
 type AlertResult struct {
 	AlertID     string `json:"alert_id"`
+	RuleID      string `json:"rule_id"`
 	RuleName    string `json:"rule_name"`
 	Severity    string `json:"severity"`
 	Hostname    string `json:"hostname"`
