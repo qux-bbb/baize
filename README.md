@@ -62,29 +62,11 @@ sudo ./install_server.sh --public-addr 192.168.1.10
 3. Dashboard 主机页应看到 Agent 在线
 4. 事件页出现 notepad 的进程创建事件
 
-> 📦 **完整部署指南**（防火墙细节、常见问题排查、安全说明、卸载）：见 [`server/deploy/README.md`](server/deploy/README.md)
+> 📦 **完整部署指南**（防火墙细节、常见问题排查、安全说明、卸载、运维排障）：见 [`server/deploy/README.md`](server/deploy/README.md)
 
 ## Release 产物
 
 `v0.1.x` 发布的 assets：`baize-server-*-linux-amd64.tar.gz` / 对应 `-windows-amd64.zip`、`baize-agent-*-windows-amd64.zip`、`SHA256SUMS.txt`（安装脚本会校验完整性）。
-
-## 网络隔离（隔离主机）
-
-主机页行尾 `⋯` → **隔离主机**（或主机详情页按钮），选择自动解除时间、填写原因后确认。隔离立即生效，主机状态列变为「已隔离」，菜单随之变为「解除隔离」。
-
-- **隔离期间只保留**：Agent → Server 的管理通道、DNS(53)、本地回环；其余出站（含内网横向）全部阻断
-- 状态由 Agent 上报（心跳 30 秒一轮校正）；隔离在 **Agent 崩溃 / 系统重启后依然保持**
-- **解除**：菜单「解除隔离」一键恢复；自动解除可选 1 小时 / 24 小时 / 7 天 / 不自动解除
-- ⚠️ **本地救援**（Agent 失联、Dashboard 解除不生效时，在目标机管理员终端执行）：
-
-  ```
-  "C:\Program Files\Baize\baize-agent.exe" --isolate-off
-  ```
-
-- 卸载 Agent 会先自动解除隔离，不留残留规则
-- 仅支持 Windows Agent
-
-> 运维与排障细节（残留检查等）：见 [`server/deploy/README.md`](server/deploy/README.md)
 
 ## 开发模式
 
