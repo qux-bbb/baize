@@ -32,7 +32,7 @@ use tokio::sync::mpsc;
 use tokio::time;
 use tonic::transport::Endpoint;
 use tonic::Request;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use pb::baize_service_client::BaizeServiceClient;
 use pb::{AgentInfo, Event};
@@ -656,13 +656,18 @@ async fn run(
     let mut incoming = response.into_inner();
 
     // 心跳循环：每 30 秒上报 AgentInfo（注册 / 保活，独立于事件流）。
-    // 身份校验失败（如被 Server 吊销）→ 置 auth_failed 标志，主循环据此断开连接
-    {
+    // 身份校验失败（如被 Server 吊销）→ 置 auth_failed 标志，主循环据此断开连接。
+    //
+    // 这个任务必须随 run() 一起结束：run() 断线后会被重新调用，旧心跳若不 abort
+    // 就会一直存活并继续上报（实测每次重连泄漏一个，累积约 9 个并发，
+    // 服务端心跳频率从 2/分钟涨到 ~15/分钟）。故用 AbortOnDrop 守卫，
+    // 变量必须在函数作用域存活，所以写成 `let _hb_guard = {...}`。
+    let _hb_guard = {
         let mut hb_client = client.clone();
         let hb_info = agent_info.clone();
         let hb_key = agent_key.to_string();
         let hb_failed = auth_failed.clone();
-        tokio::spawn(async move {
+        AbortOnDrop(tokio::spawn(async move {
             loop {
                 time::sleep(Duration::from_secs(30)).await;
                 // 心跳携带当前隔离状态（Agent 是隔离状态的权威源，Server 据此更新主机状态）
@@ -682,8 +687,8 @@ async fn run(
                     Err(e) => error!("心跳上报失败: {:?}", e),
                 }
             }
-        });
-    }
+        }))
+    };
 
     loop {
         tokio::select! {
@@ -865,9 +870,28 @@ async fn run(
 
 // ── 辅助函数 ──────────────────────────────────────────
 
+/// 让 `spawn` 出来的任务随守卫一起结束：守卫被 drop 时 `abort()` 该任务。
+///
+/// 用于 `run()` 里的「每连接」任务。`run()` 断线后会重新进入，旧任务若不被
+/// abort 就会一直存活并继续工作（实测每次重连泄漏一个心跳任务，累积约 9 个
+/// 并发，服务端心跳频率从 2/分钟涨到 ~15/分钟）。
+///
+/// ⚠️ 必须绑定到具名变量：`let _guard = AbortOnDrop(..)` 会在作用域结束时才 drop；
+/// 写成 `let _ = AbortOnDrop(..)` 会当场 drop，等于没有守卫。
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 /// 采集器管理器 — 持有各事件类型的采集器实例
 /// 事件类型开关由 Server 通过 ConfigureEventTypesCommand 控制，
 /// 关闭时停止对应采集器（EvtClose + 释放审计策略），不再本地采集。
+///
+/// `Drop` 会停掉全部采集器：采集器的订阅线程只认 `running=false`，
+/// 不会因为宿主被 drop 而退出。
 struct CollectorManager {
     #[cfg(target_os = "windows")]
     process: std::sync::Mutex<collector::process_collector::ProcessCollector>,
@@ -900,6 +924,54 @@ impl CollectorManager {
                 states: std::sync::Mutex::new(HashMap::new()),
             }
         }
+    }
+
+    /// 停止所有采集器（幂等）。采集器内部若未启动则直接返回。
+    fn stop_all(&self) {
+        #[cfg(target_os = "windows")]
+        {
+            match self.process.lock() {
+                Ok(mut c) => {
+                    if let Err(e) = c.stop() {
+                        warn!("[ProcessMon] 停止失败: {:?}", e);
+                    }
+                }
+                Err(e) => warn!("[ProcessMon] 锁已中毒，跳过停止: {}", e),
+            }
+            match self.network.lock() {
+                Ok(mut c) => {
+                    if let Err(e) = c.stop() {
+                        warn!("[NetMon] 停止失败: {:?}", e);
+                    }
+                }
+                Err(e) => warn!("[NetMon] 锁已中毒，跳过停止: {}", e),
+            }
+            match self.dns.lock() {
+                Ok(mut c) => {
+                    if let Err(e) = c.stop() {
+                        warn!("[DnsMon] 停止失败: {:?}", e);
+                    }
+                }
+                Err(e) => warn!("[DnsMon] 锁已中毒，跳过停止: {}", e),
+            }
+        }
+        match self.file.lock() {
+            Ok(mut c) => c.stop(),
+            Err(e) => warn!("[FileMon] 锁已中毒，跳过停止: {}", e),
+        }
+    }
+}
+
+/// `run()` 返回（断线重连、被吊销、出错）时清理本连接的采集器。
+///
+/// 不做这件事的后果实测很严重：采集器的订阅线程只在 `running=false` 时退出，
+/// 而它是 `EvtSubscribe` 的阻塞订阅；宿主被 drop 不会让它停下。于是每次重连
+/// 泄漏一个线程 + 一个 EvtSubscribe 句柄，且旧采集器仍通过全局 `PROCESS_TX`
+/// 往「当前」这条 channel 发事件 —— 同一个 OS 事件被 N 个采集器各发一遍，
+/// 实测 84.6% 的事件行是冗余重复（最高 9 倍）。
+impl Drop for CollectorManager {
+    fn drop(&mut self) {
+        self.stop_all();
     }
 }
 
@@ -1770,4 +1842,53 @@ fn query_system_info() -> anyhow::Result<String> {
 #[cfg(not(windows))]
 fn query_system_info() -> anyhow::Result<String> {
     Err(anyhow::anyhow!("系统信息查询仅支持 Windows"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    /// The guard must actually abort its task on drop.
+    #[tokio::test]
+    async fn abort_on_drop_stops_task() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let c = Arc::clone(&counter);
+        let guard = AbortOnDrop(tokio::spawn(async move {
+            loop {
+                c.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        }));
+
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        assert!(counter.load(Ordering::SeqCst) > 0, "task should be running");
+
+        drop(guard);
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        let a = counter.load(Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        let b = counter.load(Ordering::SeqCst);
+        assert_eq!(a, b, "task must stop once the guard is dropped");
+    }
+
+    /// Holding the guard must NOT stop the task (guards against a test that
+    /// passes because the task never ran in the first place).
+    #[tokio::test]
+    async fn abort_on_drop_keeps_task_alive_while_held() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let c = Arc::clone(&counter);
+        let _guard = AbortOnDrop(tokio::spawn(async move {
+            loop {
+                c.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        }));
+
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        let a = counter.load(Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        let b = counter.load(Ordering::SeqCst);
+        assert!(b > a, "task must keep running while the guard is held");
+    }
 }
