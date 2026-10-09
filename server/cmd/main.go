@@ -365,15 +365,18 @@ func main() {
 	agentInstaller := flag.String("agent-installer", "", "预构建的 Agent MSI 安装包路径（下载用），如 C:\\Baize\\baize-agent.msi")
 	flag.Parse()
 
-	// 日志写入文件（与 stderr 同时输出）
+	// 日志写入文件（与 stderr 同时输出）；单文件超过上限自动轮转为
+	// server.log.<yyyyMMdd-HHmmss>（只改名，不删除历史日志）
 	logDir := *dataDir
 	os.MkdirAll(logDir, 0755)
 	logPath := filepath.Join(logDir, "server.log")
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-	if err == nil {
-		log.SetOutput(io.MultiWriter(os.Stderr, logFile))
-		log.Printf("[Log] 日志已写入: %s", logPath)
-		defer logFile.Close()
+	if rot, err := newRotatingWriter(logPath, logRotateMaxBytes); err != nil {
+		fmt.Fprintf(os.Stderr, "[Log] 无法打开日志文件 %s: %v\n", logPath, err)
+	} else {
+		log.SetOutput(io.MultiWriter(os.Stderr, rot))
+		log.Printf("[Log] 日志已写入: %s（超过 %d MB 自动轮转为 %s.<时间戳>）",
+			logPath, logRotateMaxBytes>>20, logPath)
+		defer rot.Close()
 	}
 
 	// 端口占用检查（务必在存储初始化之前）：
