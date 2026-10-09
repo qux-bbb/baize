@@ -191,7 +191,27 @@ func New(path string) (*Store, error) {
 		// bolt_timeout 必须显式设置：scorch 从该 config 取值作为 bolt 文件锁等待上限，
 		// 不设置即为 0，而 bbolt 在 Timeout==0 时是无限重试（永不超时），
 		// 索引被其他实例持有时会静默挂死在这里。
-		index, err = bleve.OpenUsing(path, map[string]interface{}{"bolt_timeout": "5s"})
+		//
+		// 除 bolt_timeout 外不要再加 scorchPersisterOptions 之类的调参。
+		// 2026-10-08 曾把 PersisterNapUnderNumFiles 设为 0（想让 persister 不等
+		// merger），2026-10-09 做了 A/B 实测：两臂各按生产写入方式（每事件一次
+		// index.Index()）连写 599 条，段数都稳定在 2–3 个（0.01 段/写入）——
+		// 该调参既不改善也不恶化，既不是段膨胀的原因，也不是解药，故移除。
+		//
+		// 段文件数一旦进入病态就不再自行收敛（实测 59,298 个活段 / 5.8GB +
+		// root.bolt 3GB，运行中仍以 ~40-100 段/分钟净增），且两条常规补救路都堵死：
+		//   1) scorch ForceMerge：merger 协程会 panic（runtime error: index out of
+		//      range），随后 ForceMerge 永久等待一个不会关闭的 doneCh —— bleve bug，
+		//      调 persister 参数无效；
+		//   2) 只读全量导出：每次命中要随机打开不同段文件，实测 ~11 条/秒，
+		//      33 万条要 8–9 小时，不可用。
+		// 可行的处置：停掉 Server（bolt 独占锁），用一个一次性的 Bleve 客户端按查询
+		// 只导出必要文档（如 type:host OR type:system_state OR type:alert），把旧索引
+		// 目录改名留底，再用 store.New() 的同一份 mapping 重建新索引。
+		// 实测 18 条文档 6 秒完成；全量导出不可行时，这是保留业务状态的最快路径。
+		index, err = bleve.OpenUsing(path, map[string]interface{}{
+			"bolt_timeout": "5s",
+		})
 		if err != nil {
 			return nil, fmt.Errorf("打开索引失败: %w", err)
 		}
