@@ -1,14 +1,38 @@
 import { useState, useEffect, type MouseEvent } from 'react'
 import { API, fetchJSON } from './api'
 
+// Server 地址候选的来源（与后端 AddrOption.Source 对应）
+type AddrSource = 'public' | 'host' | 'local' | 'loopback'
+
+interface AddrOption {
+  addr: string
+  source: AddrSource
+}
+
 interface AgentInfo {
   public_addr: string
+  addr_options?: AddrOption[]
   agent_binary: string
   binary_exists: boolean
   binary_size: number
   binary_sha256: string
   tls_enabled?: boolean
 }
+
+// 候选来源文案：让操作者一眼看出这个地址"从哪来、能不能发给远程机"
+const SOURCE_LABEL: Record<AddrSource, string> = {
+  public: 'Server 上报的 --public-addr，推荐',
+  host: '按当前访问地址推断',
+  local: '本机网卡',
+  loopback: '本机回环，仅同机测试用',
+}
+
+// 候选地址单一来源：优先用 Server 下发的 addr_options（含端口，前端无法自行拼对）；
+// 仅当旧 Server 未下发该字段时回落到 public_addr，避免页面直接空掉。
+const addrOptionsOf = (info: AgentInfo | null): AddrOption[] =>
+  info?.addr_options?.length
+    ? info.addr_options
+    : (info?.public_addr ? [{ addr: info.public_addr, source: 'public' }] : [])
 
 interface TokenRec {
   id: string
@@ -24,9 +48,6 @@ const MASK_DOTS = '••••••••••••••••••••�
 const maskPlain = (p: string): string =>
   p && p.length >= 20 ? p.slice(0, 12) + MASK_DOTS + p.slice(-4) : ''
 
-// Server 地址三选一：Server 上报值 / 按当前访问地址推断 / 自定义
-type AddrMode = 'server' | 'inferred' | 'custom'
-
 export default function AgentDownload() {
   const [agentInfo, setAgentInfo] = useState<AgentInfo | null>(null)
   const [infoErr, setInfoErr] = useState('')
@@ -41,16 +62,15 @@ export default function AgentDownload() {
   const [tokenMsg, setTokenMsg] = useState('')
   const [cmdMsg, setCmdMsg] = useState('')
 
-  // ── 第 1 步：Server 地址 ──
-  const [addrMode, setAddrMode] = useState<AddrMode>('server')
-  const [customAddr, setCustomAddr] = useState('')
+  // ── 第 1 步：Server 地址（候选全部来自 Server，不可自定义） ──
+  const [selectedAddr, setSelectedAddr] = useState('')
 
   useEffect(() => {
     fetchJSON<AgentInfo>(`${API}/agent/info`)
       .then(info => {
         setAgentInfo(info)
-        // 未配置 --public-addr 时，Server 会按请求 Host 推断；这种情况直接切到"按访问地址推断"
-        if (!info.public_addr) setAddrMode('inferred')
+        // 默认选中第一个候选（顺序由 Server 排定：上报值 > 访问地址推断 > 网卡 > 回环）
+        setSelectedAddr(addrOptionsOf(info)[0]?.addr || '')
       })
       .catch(() => setInfoErr('加载 Agent 信息失败'))
     loadTokens()
@@ -66,7 +86,7 @@ export default function AgentDownload() {
   }
 
   // 命令内容变了就清掉上一次的复制反馈，避免"已复制/复制失败"指向的其实是旧命令
-  useEffect(() => { setCmdMsg('') }, [selectedToken, addrMode, customAddr])
+  useEffect(() => { setCmdMsg('') }, [selectedToken, selectedAddr])
 
   // 取 token 明文（缓存；失败=旧版仅存哈希）
   const fetchPlain = async (id: string): Promise<string | null> => {
@@ -152,13 +172,13 @@ export default function AgentDownload() {
   }
 
   // ── 第 1 步状态 ──
-  const scheme = agentInfo?.tls_enabled ? 'https://' : 'http://'
-  const inferredAddr = `${scheme}${window.location.hostname}:50051`
-  const serverAddr =
-    addrMode === 'server' ? (agentInfo?.public_addr || '')
-      : addrMode === 'inferred' ? inferredAddr
-        : customAddr.trim()
+  // 候选地址全部由 Server 给出（/api/agent/info 的 addr_options），前端不再自行拼装地址：
+  // 服务端口是 --port 决定的，只有 Server 自己知道。
+  const addrOptions = addrOptionsOf(agentInfo)
+  const serverAddr = selectedAddr
   const step1Done = !!serverAddr
+  // 与上报值不一致 = 选的是推断/网卡/回环。这些地址都在证书 SAN 内（TLS 不会因此失败），
+  // 但可达范围不同，所以仍然提示，避免把回环地址发给远程机。
   const addrMismatch = !!serverAddr && !!agentInfo?.public_addr && serverAddr !== agentInfo.public_addr
 
   // ── 第 2 步状态 ──
@@ -213,24 +233,25 @@ export default function AgentDownload() {
           <span className="sp" />
           {agentInfo?.tls_enabled && <span className="ok-note">🔒 TLS 已启用</span>}
         </div>
-        <select className="inp" style={{ width: '100%' }} value={addrMode}
-          onChange={e => setAddrMode(e.target.value as AddrMode)}>
-          <option value="server">
-            {(agentInfo?.public_addr || '（Server 未上报地址）')}　（Server 上报的 --public-addr，推荐）
-          </option>
-          <option value="inferred">{inferredAddr}　（按当前访问地址推断）</option>
-          <option value="custom">自定义…</option>
-        </select>
-        {addrMode === 'custom' && (
-          <input className="inp" style={{ width: '100%', marginTop: '0.4rem' }}
-            placeholder="https://<域名或 IP>:50051"
-            value={customAddr}
-            onChange={e => setCustomAddr(e.target.value)} />
+        {addrOptions.length > 0 ? (
+          <select className="inp" style={{ width: '100%' }} value={selectedAddr}
+            onChange={e => setSelectedAddr(e.target.value)}>
+            {addrOptions.map(o => (
+              <option key={o.addr} value={o.addr}>
+                {o.addr}　（{SOURCE_LABEL[o.source] || '候选地址'}）
+              </option>
+            ))}
+          </select>
+        ) : (
+          <div className="hint">
+            没有可用的 Server 地址候选。请给 Server 加启动参数 --public-addr（如 http://10.0.0.1:50051）后重启。
+          </div>
         )}
         {addrMismatch && (
           <div className="warn-box">
-            ⚠ 该地址与 Server 上报的 --public-addr 不一致；TLS 已启用时会导致 Agent 证书校验失败。
-            改动只影响下方命令文本，不改 Server 配置。
+            ⚠ 该地址与 Server 上报的 --public-addr（{agentInfo?.public_addr}）不一致。
+            安装命令会把所选地址写进目标机配置，请确认目标机能访问到它：
+            网卡地址通常只在同一网段可达，回环地址仅同机可用。
           </div>
         )}
         {infoErr && <div className="warn-box">⚠ {infoErr}</div>}

@@ -30,14 +30,16 @@ type Handler struct {
 	agentBinary string
 	// publicAddr: Server 对外 gRPC 地址（--public-addr），下载页展示用
 	publicAddr string
+	// grpcPort: gRPC 端口（--port），下载页拼装候选 Server 地址用
+	grpcPort int
 	// agentInstaller: 预构建的 MSI 安装包路径（--agent-installer），直接下发
 	agentInstaller string
 	// caFile: TLS CA 证书路径（data-dir/ca.crt），随下载包分发（公钥，供 Agent 验证 Server）
 	caFile string
 }
 
-func New(s *store.Store, cmdBus *engine.CommandBus, cfg *engine.ConfigManager, eng *engine.Engine, auth *AuthManager, reg *AgentRegistry, trans *filexfer.Registry, agentBinary, publicAddr, agentInstaller, caFile string) *Handler {
-	return &Handler{store: s, cmdBus: cmdBus, cfg: cfg, eng: eng, auth: auth, reg: reg, trans: trans, agentBinary: agentBinary, publicAddr: publicAddr, agentInstaller: agentInstaller, caFile: caFile}
+func New(s *store.Store, cmdBus *engine.CommandBus, cfg *engine.ConfigManager, eng *engine.Engine, auth *AuthManager, reg *AgentRegistry, trans *filexfer.Registry, agentBinary, publicAddr string, grpcPort int, agentInstaller, caFile string) *Handler {
+	return &Handler{store: s, cmdBus: cmdBus, cfg: cfg, eng: eng, auth: auth, reg: reg, trans: trans, agentBinary: agentBinary, publicAddr: publicAddr, grpcPort: grpcPort, agentInstaller: agentInstaller, caFile: caFile}
 }
 
 // ── 登录 ──────────────────────────────────────────────────

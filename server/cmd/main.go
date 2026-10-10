@@ -450,7 +450,7 @@ func main() {
 	{
 		mux := http.NewServeMux()
 		if bleveStore != nil {
-			apiHandler := api.New(bleveStore, cmdBus, cfg, eng, authManager, registry, transRegistry, *agentBinary, *publicAddr, *agentInstaller, caFile)
+			apiHandler := api.New(bleveStore, cmdBus, cfg, eng, authManager, registry, transRegistry, *agentBinary, *publicAddr, *port, *agentInstaller, caFile)
 			mux.HandleFunc("POST /api/login", apiHandler.Login)
 			mux.HandleFunc("POST /api/change-password", apiHandler.ChangePassword)
 			mux.HandleFunc("POST /api/logout", apiHandler.Logout)

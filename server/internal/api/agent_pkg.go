@@ -30,24 +30,32 @@ var installBatFS embed.FS
 //go:embed agent_uninstall.bat
 var uninstallBatFS embed.FS
 
+// AddrOption 下载页「Server 地址」下拉的一个候选地址
+type AddrOption struct {
+	Addr   string `json:"addr"`   // 完整 gRPC 地址，TLS 启用时已是 https://
+	Source string `json:"source"` // 来源：public（--public-addr）/ host（请求 Host）/ local（本机网卡）/ loopback（同机测试）
+}
+
 // AgentInfo 下载页展示的 Agent 打包信息
 type AgentInfo struct {
-	PublicAddr      string `json:"public_addr"`       // 将注入 agent.conf 的 Server 地址
-	AgentBinary     string `json:"agent_binary"`      // --agent-binary 配置的路径
-	BinaryExists    bool   `json:"binary_exists"`     // agent 二进制是否就绪
-	BinarySize      int64  `json:"binary_size"`       // 字节
-	BinarySHA256    string `json:"binary_sha256"`     // agent 二进制 SHA256
-	InstallerPath   string `json:"installer_path"`    // --agent-installer 配置的 MSI 路径
-	InstallerExists bool   `json:"installer_exists"`  // MSI 是否就绪
-	InstallerSize   int64  `json:"installer_size"`    // 字节
-	InstallerSHA256 string `json:"installer_sha256"`  // MSI SHA256
-	TLSEnabled      bool   `json:"tls_enabled"`       // 是否启用 TLS（ca.crt 就绪，注入包含 ca）
+	PublicAddr      string       `json:"public_addr"`       // 将注入 agent.conf 的 Server 地址
+	AddrOptions     []AddrOption `json:"addr_options"`      // Server 地址候选（顺序即推荐顺序，前端默认选第一项）
+	AgentBinary     string       `json:"agent_binary"`      // --agent-binary 配置的路径
+	BinaryExists    bool         `json:"binary_exists"`     // agent 二进制是否就绪
+	BinarySize      int64        `json:"binary_size"`       // 字节
+	BinarySHA256    string       `json:"binary_sha256"`     // agent 二进制 SHA256
+	InstallerPath   string       `json:"installer_path"`    // --agent-installer 配置的 MSI 路径
+	InstallerExists bool         `json:"installer_exists"`  // MSI 是否就绪
+	InstallerSize   int64        `json:"installer_size"`    // 字节
+	InstallerSHA256 string       `json:"installer_sha256"`  // MSI SHA256
+	TLSEnabled      bool         `json:"tls_enabled"`       // 是否启用 TLS（ca.crt 就绪，注入包含 ca）
 }
 
 // AgentInfo 返回下载页所需的打包信息（GET /api/agent/info）
 func (h *Handler) AgentInfo(w http.ResponseWriter, r *http.Request) {
 	info := AgentInfo{
 		PublicAddr:    h.agentServerAddr(h.resolvePublicAddr(r)),
+		AddrOptions:   h.addrCandidates(r),
 		AgentBinary:   h.agentBinary,
 		InstallerPath: h.agentInstaller,
 		TLSEnabled:    h.caFile != "",
@@ -201,9 +209,18 @@ func (h *Handler) agentServerAddr(addr string) string {
 	return "https://" + strings.TrimPrefix(addr, "http://")
 }
 
+// hostOnly 从 Host 头（可能带端口、可能是 [IPv6] 形式）取出主机名
+func hostOnly(hostport string) string {
+	host := hostport
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return strings.Trim(strings.TrimSpace(host), "[]") // 去掉 IPv6 方括号
+}
+
 // resolvePublicAddr 确定 agent.conf 注入的 Server 地址：
 // --public-addr 优先（完整 gRPC 地址，如 http://10.0.0.1:50051）；
-// 未配置时用请求 Host 的 hostname 拼 http://<host>:50051
+// 未配置时用请求 Host 的 hostname 拼 http://<host>:<gRPC 端口>
 func (h *Handler) resolvePublicAddr(r *http.Request) string {
 	if h.publicAddr != "" {
 		return h.publicAddr
@@ -211,15 +228,59 @@ func (h *Handler) resolvePublicAddr(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
-	host := r.Host
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	host = strings.Trim(host, "[]") // 去掉 IPv6 括号
+	host := hostOnly(r.Host)
 	if host == "" {
 		return ""
 	}
-	return fmt.Sprintf("http://%s:50051", host)
+	return fmt.Sprintf("http://%s:%d", host, h.grpcPort)
+}
+
+// addrCandidates 返回下载页「Server 地址」下拉的全部候选，顺序即推荐顺序：
+//  1. public   —— --public-addr（Server 显式声明的对外地址，最可信）
+//  2. host     —— 请求 Host 推断（Dashboard 当前正在用的地址）
+//  3. local    —— 本机各非回环 IPv4 网卡
+//  4. loopback —— 127.0.0.1（仅同机测试用，排在最后避免误发给远程机）
+//
+// 取址口径与证书 SAN（见 cmd/tls.go）一致：都是 --public-addr + 本机非回环 IPv4 + 回环，
+// 所以正常情况下 TLS 下都能通过 Agent 侧证书校验；IPv6 与任意外部域名不在 SAN 内，
+// 一律不进候选。注意证书存在即复用，改了 --public-addr 或换了网卡后需删掉
+// data-dir 的证书重新生成，否则 SAN 仍是旧的（该隐患与本次改动无关）。
+// 去重按最终地址（TLS 转换后）大小写不敏感判定。
+func (h *Handler) addrCandidates(r *http.Request) []AddrOption {
+	var out []AddrOption
+	seen := map[string]bool{}
+	add := func(raw, source string) {
+		addr := h.agentServerAddr(strings.TrimRight(strings.TrimSpace(raw), "/"))
+		if addr == "" {
+			return
+		}
+		key := strings.ToLower(addr)
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, AddrOption{Addr: addr, Source: source})
+	}
+
+	if h.publicAddr != "" {
+		add(h.publicAddr, "public")
+	}
+	if r != nil {
+		if host := hostOnly(r.Host); host != "" {
+			add(fmt.Sprintf("http://%s:%d", host, h.grpcPort), "host")
+		}
+	}
+	if addrs, err := net.InterfaceAddrs(); err == nil {
+		for _, a := range addrs {
+			ipn, ok := a.(*net.IPNet)
+			if !ok || ipn.IP.To4() == nil || ipn.IP.IsLoopback() {
+				continue // 只取非回环 IPv4；IPv6 不在证书 SAN 内，TLS 下不可用
+			}
+			add(fmt.Sprintf("http://%s:%d", ipn.IP.String(), h.grpcPort), "local")
+		}
+	}
+	add(fmt.Sprintf("http://127.0.0.1:%d", h.grpcPort), "loopback")
+	return out
 }
 
 // ── zip 写入辅助 ─────────────────────────────────────────
