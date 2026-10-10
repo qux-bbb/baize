@@ -492,7 +492,7 @@ export default function App() {
             {route.page === 'host-detail' ? (
               <><span className="back" onClick={() => navigate('hosts')}>←</span> <span className="logo">◆</span> {host?.hostname || '主机详情'}</>
             ) : route.page === 'agent' ? (
-              <><span className="back" onClick={() => navigate('hosts')}>←</span> <span className="logo">◆</span> 下载 Agent</>
+              <><span className="back" onClick={() => navigate('hosts')}>←</span> <span className="logo">◆</span> 安装 Agent</>
             ) : (
               <><span className="logo">◆</span> Baize 白泽 <span className="subtitle">Dashboard</span></>
             )}
@@ -523,7 +523,7 @@ export default function App() {
               onClick={() => navigate('agent')}
               style={{ marginBottom: '0.8rem' }}
             >
-              📦 下载 Agent
+              📦 安装 Agent
             </button>
             <BaizeGrid
               columnDefs={hostCols}
